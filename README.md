@@ -10,9 +10,9 @@ Providers retire models on published schedules, and retired IDs fail hard (HTTP 
 
 | Provider | Official source parsed |
 |---|---|
-| Anthropic | [model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) (Markdown) |
-| OpenAI | [deprecations](https://developers.openai.com/api/docs/deprecations) (HTML tables, including API sunsets like the Assistants API) |
-| Google Gemini | [deprecations](https://ai.google.dev/gemini-api/docs/deprecations) (Markdown export) |
+| Anthropic | [model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) (Markdown) <!-- evergreen --> |
+| OpenAI | [deprecations](https://developers.openai.com/api/docs/deprecations) (HTML tables, including API sunsets like the Assistants API) <!-- evergreen --> |
+| Google Gemini | [deprecations](https://aistudio.google.com/docs/deprecations) (Markdown export) <!-- evergreen --> |
 
 Every hit gets one of four states:
 - **retired**: requests fail now;
