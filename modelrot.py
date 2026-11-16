@@ -30,9 +30,10 @@ CACHE = Path(os.environ.get("MODEL_ROT_CACHE", Path.home() / ".cache" / "model-r
 TODAY = dt.date.today()
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 ID_RX = re.compile(r"(?<![\w./-])((?:claude|gpt|chatgpt|gemini|text-embedding|dall-e|whisper|imagen|veo|tts|davinci|babbage|"
-                   r"computer-use|codex|omni-moderation|text-moderation|o[1-9])(?:-[\w.]+)*)(?![\w/-])")
+                   r"computer-use|codex|omni-moderation|text-moderation|sora|lyria|embedding|text-davinci|text-search|"
+                   r"code-davinci|code-cushman|curie|ada|o[1-9])(?:-[\w.]+)*)(?![\w/-])")
 API_PATTERNS = [  # (name as it appears on the provider page, code regex)
-    ("Assistants API", re.compile(r"\bbeta\.(assistants|threads)\b|/v1/assistants\b|/v1/threads\b|OpenAIAssistant\b")),
+    ("Assistants API", re.compile(r"\bbeta\.(assistants|threads)\b|api\.openai\.com/v1/(assistants|threads)\b|OpenAIAssistant")),
 ]
 SCAN_EXT = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".cs",
             ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env", ".md", ".mdx", ".txt", ".sh"}
@@ -102,13 +103,16 @@ def parse_date(s: str) -> tuple[dt.date | None, bool]:
 
 def ids_in(cell: str) -> list[str]:
     # drop prose parentheticals ("(… no longer available …; routes to …)"), keep ID lists like "GPT-4o (gpt-4o-…)"
-    cell = re.sub(r"\([^)]*(?:no longer|route|effective|available|shutting)[^)]*\)", " ", cell, flags=re.I)
-    return [m.group(1) for m in ID_RX.finditer(cell.replace("`", " "))]
+    cell = re.sub(r"\([^)]*(?:no longer|rout|effective|available|shutting)[^)]*\)", " ", cell, flags=re.I)
+    ticked = re.findall(r"`([\w.:@-]+)`", cell)
+    if ticked:
+        return ticked
+    return [m.group(1) for m in ID_RX.finditer(cell)]
 
 
 def rows_to_entries(header: list[str], rows: list[list[str]], provider: str, src: str) -> list[Entry]:
     h = [c.lower() for c in header]
-    id_col = next((i for i, c in enumerate(h) if "model" in c or "name" in c or "affected" in c), None)
+    id_col = next((i for i, c in enumerate(h) if "model" in c or "name" in c or "affected" in c or "agent" in c), None)
     date_col = next((i for i, c in enumerate(h) if "retire" in c or "shutdown" in c), None)
     rep_col = next((i for i, c in enumerate(h) if "replacement" in c), None)
     state_col = next((i for i, c in enumerate(h) if c.strip() in ("current state", "state", "status")), None)
@@ -122,14 +126,16 @@ def rows_to_entries(header: list[str], rows: list[list[str]], provider: str, src
         if state_col is not None and state_col < len(r) and r[state_col].strip().lower() == "active":
             date = None   # an active model's "not sooner than" date is a promise, not an announced retirement
         rep = r[rep_col] if rep_col is not None and rep_col < len(r) else ""
-        aliased = bool(re.search(r"\broutes?\b.*\bto\b|alias", rep, re.I))
+        aliased = bool(re.search(r"\brout(?:e|es|ed|ing)\b.*\bto\b|alias", rep, re.I))
         alias_date = None
         if aliased:
-            m = re.search(r"effective\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})", rep)
+            m = re.search(r"effective\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})", rep, re.I)
             alias_date = parse_date(m.group(1))[0] if m else None
         ids = ids_in(r[id_col])
-        if not ids and r[id_col].strip():
-            ids = [r[id_col].strip()]          # a feature/API row, e.g. "Assistants API"
+        cell = r[id_col].strip()
+        if not ids and cell:
+            # a feature/API row ("Assistants API") keeps its name; otherwise the first word is the ID
+            ids = [cell] if re.search(r"\bAPI\b|endpoint", cell) else [cell.split()[0].strip("`,")]
         for i in ids:
             out.append(Entry(i, provider, date, earliest, re.sub(r"\s+", " ", rep)[:120], aliased, alias_date, src))
     return out
@@ -206,6 +212,11 @@ def load_db(refresh=False) -> tuple[dict[str, Entry], dict[str, str]]:
             if old is None or (old.date is None and e.date is not None):
                 db[key] = e
         meta[prov] = f"{len(entries)} rows, fetched {dt.datetime.fromtimestamp(ts):%Y-%m-%d %H:%M}"
+    for key, e in list(db.items()):   # undated aliases of dated snapshots: claude-x-20250514 -> claude-x, -latest, -0
+        m = re.match(r"^(.*)-(\d{8})$", key)
+        if m:
+            for alias in (m.group(1), m.group(1) + "-latest", m.group(1) + "-0"):
+                db.setdefault(alias, e)
     return db, meta
 
 
@@ -215,42 +226,80 @@ def normalize(model: str) -> list[str]:
     """Candidate DB keys for an ID found in code (provider prefixes, Bedrock/Vertex forms)."""
     m = model.lower()
     cands = [m]
-    m2 = re.sub(r"^(?:(?:us|eu|apac|global)\.)?anthropic\.", "", m)       # Bedrock
+    m2 = re.sub(r"^(?:[a-z]{2,6}\.)?anthropic\.", "", m)                   # Bedrock (us./eu./apac./au./jp./global.)
     m2 = re.sub(r"-v\d+(?::\d+)?$", "", m2)
     m2 = re.sub(r"@(\d{8})$", r"-\1", m2)                                 # Vertex claude-x@20250514
+    m2 = re.sub(r"-v\d+-(\d{8})$", r"-\1", m2)                            # Vertex claude-3-5-sonnet-v2@20241022
     if m2 != m:
         cands.append(m2)
     return cands
 
 
+SCAN_EXT |= {".ipynb", ".tf", ".html", ".vue", ".svelte", ".properties", ".xml", ".sql", ".swift", ".dart", ".scala"}
+TOKEN = re.compile(r"[A-Za-z0-9][\w.@:/-]*")          # linear: one greedy class, no backtracking
+BARE_O = re.compile(r"^o[1-9](?:-[a-z]+)?$")
+MAX_BYTES = 5_000_000
+
+
+def iter_files(root: Path, include_docs: bool):
+    if root.is_file():
+        yield root
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in sorted(filenames):
+            p = Path(dirpath) / name
+            suf = p.suffix.lower()
+            if name in LOCKFILES:
+                continue
+            if suf not in SCAN_EXT and not name.startswith(".env"):
+                continue
+            if not include_docs and suf in (".md", ".mdx", ".txt"):
+                continue
+            yield p
+
+
+def lookup(token: str, db: dict[str, Entry]) -> Entry | None:
+    return next((db[c] for c in normalize(token) if c in db), None)
+
+
 def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
     hits = []
-    for p in sorted(root.rglob("*")):
-        rel = p.relative_to(root)
-        if not p.is_file() or set(rel.parts[:-1]) & SKIP_DIRS or p.name in LOCKFILES:
-            continue
-        if p.suffix not in SCAN_EXT and p.name not in (".env", ".env.example"):
-            continue
-        if not include_docs and p.suffix in (".md", ".mdx", ".txt"):
-            continue
+    base = root if root.is_dir() else root.parent
+    for p in iter_files(root, include_docs):
         try:
-            lines = p.read_text(errors="replace").splitlines()
+            if p.stat().st_size > MAX_BYTES:
+                continue
+            data = p.read_bytes()
         except OSError:
             continue
-        for n, line in enumerate(lines, 1):
-            for m in re.finditer(r"[\w.@:-]*(?:claude|gpt|gemini|o[1-9]|text-embedding|dall-e|whisper|imagen|chatgpt|"
-                                 r"davinci|babbage|codex|tts)[\w.@:-]*", line, re.I):
-                token = m.group(0).strip(".:-")
-                if token != token.lower():
-                    continue   # API model IDs are lowercase; "GPT-4" / "Claude 3" are display labels
-                ent = next((db[c] for c in normalize(token) if c in db), None)
-                if ent:
-                    note = "Bedrock/Vertex ID: those platforms keep their own schedules" if normalize(token)[-1] != token.lower() else ""
-                    hits.append(Hit(str(rel), n, token, ent, "model", note))
+        if b"\0" in data[:8192]:
+            continue
+        rel = str(p.relative_to(base))
+        for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+            low = line.lower()
+            for m in TOKEN.finditer(line):
+                whole = m.group(0).strip(".:-/")
+                # try the whole token (Bedrock "us.anthropic.claude-…-v1:0") and its / and : parts
+                # ("openai/gpt-5", "models/gemini-2.0-flash:generateContent", "ft:gpt-4o-mini-…:org::x")
+                parts = [whole] + [x for x in re.split(r"[/:]", whole) if x]
+                for part in dict.fromkeys(parts):
+                    part = part.strip(".-")
+                    if not part or part != part.lower():
+                        continue   # API model IDs are lowercase; "GPT-4" is a display label
+                    if BARE_O.match(part):
+                        ctx = line[max(0, m.start() - 1):m.end() + 1]
+                        if not (re.search(r"[\"']", ctx) or "model" in low):
+                            continue   # `o3 = 4` is a variable, not the o3 model
+                    ent = lookup(part, db)
+                    if ent:
+                        note = ("Bedrock/Vertex ID: those platforms keep their own schedules"
+                                if normalize(part)[-1] != part.lower() else "")
+                        hits.append(Hit(rel, n, part, ent, "model", note))
+                        break
             for name, rx in API_PATTERNS:
                 if rx.search(line):
-                    ent = db.get(name.lower())
-                    hits.append(Hit(str(rel), n, name, ent, "api"))
+                    hits.append(Hit(rel, n, name, db.get(name.lower()), "api"))
     return hits
 
 
@@ -282,9 +331,13 @@ def render(hits: list[Hit], meta: dict[str, str], root: Path, days: int) -> str:
         groups.setdefault(h.entry.status() if h.entry else "unknown", []).append(h)
     L = [f"# model-rot report: {root.name}", "", "Sources (official pages, parsed live): " +
          "; ".join(f"[{p}]({SOURCES[p]}) {m}" for p, m in meta.items()), ""]
-    soon = [h for h in groups.get("retiring", []) if h.entry and h.entry.date and (h.entry.date - TODAY).days <= days]
+    def soon_date(h):
+        d = h.entry.alias_date or h.entry.date if h.entry else None
+        return d is not None and (d - TODAY).days <= days
+    soon = [h for h in groups.get("retiring", []) + groups.get("aliasing", []) if soon_date(h)]
     L.append(f"**{len(groups.get('retired', []))} retired** · **{len(groups.get('aliased', []))} silently aliased** · "
-             f"**{len(soon)} retiring within {days} days** · {len(groups.get('retiring', [])) - len(soon)} later · "
+             f"**{len(soon)} retiring or aliasing within {days} days** · "
+             f"{len(groups.get('retiring', [])) + len(groups.get('aliasing', [])) - len(soon)} later · "
              f"{len(groups.get('no date', []))} with no date")
     for st in sorted(groups, key=lambda s: ORDER.get(s, 9)):
         if st == "no date":
@@ -309,6 +362,7 @@ def main(argv=None):
     ap.add_argument("--refresh", action="store_true", help="re-download provider pages")
     ap.add_argument("--lookup", nargs="+", metavar="MODEL", help="just look up model IDs")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--allow-partial", action="store_true", help="continue if a provider page can't be fetched")
     a = ap.parse_args(argv)
     db, meta = load_db(a.refresh)
     if a.lookup:
@@ -317,6 +371,12 @@ def main(argv=None):
             print(f"{mid}: {describe(e)}" + (f"  [{e.source}]" if e else ""))
         return
     root = Path(a.path).resolve()
+    if not root.exists():
+        sys.exit(f"error: {root} does not exist")
+    failed = [p for p, m in meta.items() if m.startswith("unavailable")]
+    if failed and not a.allow_partial:
+        sys.exit(f"error: could not load {', '.join(failed)} deprecation data ({'; '.join(meta[p] for p in failed)}); "
+                 "results would be incomplete. Retry, or pass --allow-partial.")
     hits = scan(root, db, not a.no_docs)
     if a.json:
         print(json.dumps([{"file": h.file, "line": h.line, "match": h.match, "kind": h.kind,
@@ -324,8 +384,11 @@ def main(argv=None):
                          indent=1))
     else:
         print(render(hits, meta, root, a.days))
+    def due(e):
+        d = (e.alias_date or e.date) if e.status() == "aliasing" else e.date
+        return d is not None and (d - TODAY).days <= a.days
     bad = any(h.entry and (h.entry.status() in ("retired", "aliased") or
-                           (h.entry.status() == "retiring" and h.entry.date and (h.entry.date - TODAY).days <= a.days))
+                           (h.entry.status() in ("retiring", "aliasing") and due(h.entry)))
               for h in hits)
     sys.exit(1 if bad else 0)
 

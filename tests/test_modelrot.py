@@ -56,5 +56,57 @@ class ModelRot(unittest.TestCase):
         self.assertEqual(mr.parse_date("To be announced"), (None, False))
 
 
+class ReviewRegressions(unittest.TestCase):
+    def setUp(self):
+        mr.TODAY = TODAY
+        self.db = db()
+        for key, e in list(self.db.items()):
+            m = __import__("re").match(r"^(.*)-(\d{8})$", key)
+            if m:
+                for alias in (m.group(1), m.group(1) + "-latest"):
+                    self.db.setdefault(alias, e)
+
+    def scan_text(self, text, name="a.py"):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / name).write_text(text)
+            return sorted(h.match for h in mr.scan(Path(t), self.db))
+
+    def test_forms_in_code(self):
+        src = ('url = "models/gemini-old-flash:generateContent"\n'
+               'm = "openai/gpt-x-2024-08-06"\n'
+               'ft = "ft:gpt-x-2024-08-06:org::abc"\n'
+               'alias = "claude-gone-latest"\n'
+               'b = "au.anthropic.claude-gone-20240620-v1:0"\n'
+               'v = "claude-gone-v2@20240620"\n')
+        self.assertEqual(self.scan_text(src), ["au.anthropic.claude-gone-20240620-v1:0", "claude-gone-latest",
+                                               "claude-gone-v2@20240620", "gemini-old-flash", "gpt-x-2024-08-06",
+                                               "gpt-x-2024-08-06"])
+
+    def test_bare_o_variables_and_assistants_variants(self):
+        self.assertEqual(self.scan_text("o1 = 3\no3 = 4\n"), [])
+        self.assertEqual(self.scan_text("from langchain.agents.openai_assistant import OpenAIAssistantRunnable\n"
+                                        "requests.get('https://graph.threads.net/v1/threads')\n"), ["Assistants API"])
+
+    def test_long_token_is_linear(self):
+        import time
+        t0 = time.time()
+        self.scan_text("x = '" + "a" * 200_000 + "'\n", "big.json")
+        self.assertLess(time.time() - t0, 2.0)
+
+    def test_alias_routing_wording_and_agent_tables(self):
+        rows = mr.rows_to_entries(["Agent", "Release", "Shutdown date", "Recommended replacement"],
+                                  [["`deep-agent-1`", "May 1, 2025", "March 1, 2026", ""],
+                                   ["`flash-omni`", "x", "December 3, 2026", "Effective December 3, 2026, automatically routing to `omni-2`"]],
+                                  "gemini", "g")
+        st = {e.id: e.status(TODAY) for e in rows}
+        self.assertEqual(st, {"deep-agent-1": "retired", "flash-omni": "aliasing"})
+
+    def test_bad_path_exits_nonzero(self):
+        with self.assertRaises(SystemExit) as c:
+            mr.main(["/nonexistent/path/xyz"])
+        self.assertNotEqual(c.exception.code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
