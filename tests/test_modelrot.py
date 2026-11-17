@@ -114,6 +114,10 @@ class FeatureRows(unittest.TestCase):
                                 [["Agent Builder", "2026-11-30", "Agents SDK"], ["davinci", "2024-01-04", "gpt-x"]], "openai", "o")
         ids = sorted(e.id for e in es)
         self.assertEqual(ids, ["Agent Builder", "davinci"])
+        # review regression: IDs whose family isn't in ID_RX must still register from "id + prose" cells
+        es2 = mr.rows_to_entries(["Model", "Shutdown date"], [["text-curie-001 historical price $2.00", "2024-01-04"],
+                                 ["text-similarity-ada-001", "2024-01-04"]], "openai", "o")
+        self.assertEqual(sorted(e.id for e in es2), ["text-curie-001", "text-similarity-ada-001"])
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "AGENTS.md").write_text("An agent calls another agent.\n")
@@ -152,6 +156,60 @@ class Copilot(unittest.TestCase):
                                ("b.prompt.md", 2, "Kimi K3", "retiring"),
                                ("b.prompt.md", 2, "claude-haiku-4.5", "retiring"),
                                ("c.chatmode.md", 3, "gpt-5.4", "retired")])
+
+
+class CopilotReview(unittest.TestCase):
+    def setUp(self):
+        mr.TODAY = TODAY
+        self.db = {mr.copilot_key(n): mr.Entry(mr.copilot_key(n), "copilot", dt.date(2026, 9, 1))
+                   for n in ("GPT-4.1", "GPT-5", "Claude Sonnet 4.5")}
+
+    def names(self, text):
+        return [h.match for h in mr.copilot_frontmatter_hits("x.agent.md", text, self.db)]
+
+    def test_yaml_forms(self):
+        self.assertEqual(self.names("\ufeff---\nmodel: GPT-4.1\n---\n"), ["GPT-4.1"])                 # BOM
+        self.assertEqual(self.names("---\nmodel:\n- GPT-4.1\n- GPT-5\n---\n"), ["GPT-4.1", "GPT-5"])  # unindented list
+        self.assertEqual(self.names("---\nmodel:\n  - GPT-5 # c\n---\n"), ["GPT-5"])                   # item comment
+        self.assertEqual(self.names("---\nmodel: >\n  GPT-4.1\n---\n"), ["GPT-4.1"])                  # folded scalar
+        self.assertEqual(self.names("---\nmodel:\n  # c\n  - GPT-4.1\n---\n"), ["GPT-4.1"])           # comment in list
+        self.assertEqual(self.names("---\nmodel: GPT-4.1\t# c\n---\n"), ["GPT-4.1"])                  # tab comment
+        self.assertEqual(self.names("---\nmodel:\n  - GPT-5\ntools: [GPT-4.1]\n---\n"), ["GPT-5"])   # list ends
+
+    def test_no_docs_keeps_copilot_files(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "x.prompt.md").write_text("---\nmodel: GPT-4.1\n---\n")
+            (Path(d) / "README.md").write_text("---\nmodel: GPT-4.1\n---\n")
+            self.assertEqual([h.file for h in mr.scan(Path(d), self.db, include_docs=False)], ["x.prompt.md"])
+
+    def test_changelog_extra_column_and_sup_footnote(self):
+        feed = ("<rss><item><title>Upcoming deprecation of GitHub Copilot models</title><link>L</link>"
+                "<content:encoded><![CDATA[<table><tr><th>Model</th><th>Provider</th><th>Deprecation date</th>"
+                "<th>Suggested alternative</th></tr><tr><td>Claude Sonnet 4.5<sup>1</sup></td><td>Anthropic</td>"
+                "<td>2026-12-14</td><td>Claude Sonnet 5.5</td></tr><tr><td>Grok 4.6\u2020</td><td>xAI</td>"
+                "<td>2026-12-14</td><td>Grok 4.7</td></tr></table>]]></content:encoded></item></rss>")
+        es = {e.id: e for e in mr.parse_copilot_changelog(feed, "copilot-changelog", "c")}
+        self.assertEqual(sorted(es), ["copilot:claude sonnet 4.5", "copilot:grok 4.6"])
+        self.assertEqual(es["copilot:claude sonnet 4.5"].replacement, "Claude Sonnet 5.5 (exceptions apply: see source)")
+
+    def test_copilot_sources_only_when_needed_and_outage_exit_2(self):
+        import tempfile
+        calls = []
+        real = mr.fetch
+        def fake(prov, refresh=False, max_age=86400):
+            calls.append(prov)
+            raise OSError("down")
+        mr.fetch = fake
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                (Path(d) / "a.py").write_text("x = 1\n")
+                with self.assertRaises(SystemExit) as cm:
+                    mr.main([d])
+                self.assertEqual(cm.exception.code, 2)
+                self.assertFalse([c for c in calls if c.startswith("copilot")])
+        finally:
+            mr.fetch = real
 
 
 if __name__ == "__main__":

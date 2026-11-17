@@ -142,7 +142,8 @@ def rows_to_entries(header: list[str], rows: list[list[str]], provider: str, src
             # a feature/API row ("Assistants API") keeps its name; otherwise the first word is the ID
             first = cell.split()[0].strip("`,")
             # the first word is an ID only if it looks like one: "Agent Builder" must not turn every "agent" into a hit
-            ids = [first] if not re.search(r"\bAPI\b|endpoint", cell) and ID_RX.fullmatch(first.lower()) else [cell]
+            plain_word = re.fullmatch(r"[A-Za-z]+", first) and not ID_RX.fullmatch(first.lower())
+            ids = [cell] if re.search(r"\bAPI\b|endpoint", cell) or plain_word else [first]
         for i in ids:
             out.append(Entry(i, provider, date, earliest, re.sub(r"\s+", " ", rep)[:120], aliased, alias_date, src))
     return out
@@ -201,7 +202,7 @@ def parse_html_tables(text: str, provider: str, src: str) -> list[Entry]:
 
 def copilot_key(name: str) -> str:
     """'Claude Sonnet 4.5 (copilot)', 'claude-sonnet-4.5', 'GPT-5.4' -> one comparable key."""
-    n = re.sub(r"\[\^[^\]]*\]|\*|`", "", name)
+    n = re.sub(r"\[\^[^\]]*\]|[*`\u2020\u2021]", "", name)
     n = re.sub(r"\((?:copilot|preview)\)", "", n, flags=re.I)
     return "copilot:" + re.sub(r"[\s_-]+", " ", n.strip().strip("\"'")).lower().strip()
 
@@ -214,7 +215,7 @@ def _copilot_rows(rows: list[list[str]], src: str) -> list[Entry]:
         d, _ = parse_date(r[1])
         if d is None:
             continue
-        caveat = " (exceptions apply: see source)" if re.search(r"\*|\[\^", r[0]) else ""
+        caveat = " (exceptions apply: see source)" if re.search(r"[*\u2020\u2021]|\[\^", r[0]) else ""
         rep = (r[2].strip() if len(r) > 2 else "") + caveat
         out.append(Entry(copilot_key(r[0]), "copilot", d, False, rep, False, None, src))
     return out
@@ -242,12 +243,20 @@ def parse_copilot_changelog(text: str, provider: str, src: str) -> list[Entry]:
         if not re.search(r"copilot", title, re.I) or not re.search(r"deprecat|retire", title, re.I):
             continue
         link = (re.search(r"<link>(.*?)</link>", item) or [None, src])[1].strip()
-        for tbl in re.findall(r"<table[^>]*>(.*?)</table>", html.unescape(item), re.S):
+        body = re.sub(r"<sup>(.*?)</sup>", r"[^\1]", html.unescape(item), flags=re.S)   # footnote markers
+        for tbl in re.findall(r"<table[^>]*>(.*?)</table>", body, re.S):
             rows = [[re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", c))).strip()
                      for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", tr, re.S)]
                     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", tbl, re.S)]
-            if rows and re.search(r"model", rows[0][0], re.I) and len(rows[0]) > 1 and re.search(r"date", rows[0][1], re.I):
-                out += _copilot_rows(rows[1:], link)
+            if not rows:
+                continue
+            mi = next((i for i, c in enumerate(rows[0]) if re.search(r"model", c, re.I)), None)
+            di = next((i for i, c in enumerate(rows[0]) if re.search(r"date", c, re.I)), None)
+            ai = next((i for i, c in enumerate(rows[0]) if re.search(r"alternative|replacement", c, re.I)), None)
+            if mi is None or di is None:
+                continue
+            out += _copilot_rows([[r[mi], r[di], r[ai] if ai is not None and ai < len(r) else ""]
+                                  for r in rows[1:] if len(r) > max(mi, di)], link)
     return out
 
 
@@ -255,10 +264,12 @@ PARSERS = {"anthropic": parse_markdown_tables, "openai": parse_html_tables, "gem
            "copilot": parse_copilot_docs, "copilot-changelog": parse_copilot_changelog}
 
 
-def load_db(refresh=False) -> tuple[dict[str, Entry], dict[str, str]]:
+def load_db(refresh=False, copilot=True) -> tuple[dict[str, Entry], dict[str, str]]:
     db: dict[str, Entry] = {}
     meta: dict[str, str] = {}
     for prov, url in SOURCES.items():
+        if prov.startswith("copilot") and not copilot:
+            continue
         try:
             text, ts = fetch(prov, refresh)
         except Exception as e:  # noqa: BLE001 - report and continue with other providers
@@ -314,7 +325,7 @@ def iter_files(root: Path, include_docs: bool):
                 continue
             if suf not in SCAN_EXT and not name.startswith(".env"):
                 continue
-            if not include_docs and suf in (".md", ".mdx", ".txt"):
+            if not include_docs and suf in (".md", ".mdx", ".txt") and not name.lower().endswith(COPILOT_FILES):
                 continue
             yield p
 
@@ -323,29 +334,45 @@ def lookup(token: str, db: dict[str, Entry]) -> Entry | None:
     return next((db[c] for c in normalize(token) if c in db), None)
 
 
+def _yaml_scalar(v: str) -> str:
+    v = re.split(r"\s+#", v, maxsplit=1)[0].strip()
+    return v.strip("\"'").strip()
+
+
 def copilot_frontmatter_hits(rel: str, text: str, db: dict[str, Entry]) -> list[Hit]:
-    """`model:` in a VS Code prompt/agent/chat-mode file: a string, an inline [list] or a YAML block list."""
-    lines = text.splitlines()
+    """`model:` in a VS Code prompt/agent/chat-mode file: scalar, inline [list], block list or folded scalar."""
+    lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
         return []
-    hits, in_list = [], False
+    hits, mode = [], ""          # mode: "list" after `model:` with no value, "fold" after `model: >` / `|`
     for n, line in enumerate(lines[1:], 2):
         if line.strip() == "---":
             break
-        m = re.match(r"^model\s*:\s*(.*)$", line)
+        names: list[str] = []
+        m = re.match(r"^model\s*:(.*)$", line)
         if m:
-            val = m.group(1).split(" #")[0].strip()
-            in_list = not val
-            names = [x for x in re.split(r",", val.strip("[]")) if x.strip()] if val else []
-        elif in_list and (m2 := re.match(r"^\s+-\s*(.+)$", line)):
-            names = [m2.group(1)]
+            val = re.split(r"\s+#", m.group(1), maxsplit=1)[0].strip()
+            if not val:
+                mode = "list"
+                continue
+            if re.fullmatch(r"[>|][+-]?", val):
+                mode = "fold"
+                continue
+            mode = ""
+            names = [_yaml_scalar(x) for x in val.strip("[]").split(",")] if val.startswith("[") else [_yaml_scalar(val)]
+        elif mode and (not line.strip() or line.lstrip().startswith("#")):
+            continue                                   # blank or comment lines don't end the value
+        elif mode == "list" and (m2 := re.match(r"^\s*-\s*(.+)$", line)):
+            names = [_yaml_scalar(m2.group(1))]
+        elif mode == "fold" and line[:1] in (" ", "\t"):
+            names, mode = [_yaml_scalar(line)], ""
         else:
-            in_list = False
+            mode = ""
             continue
-        for name in names:
+        for name in filter(None, names):
             ent = db.get(copilot_key(name))
             if ent:
-                hits.append(Hit(rel, n, name.strip().strip("\"'"), ent, "model", "GitHub Copilot model name"))
+                hits.append(Hit(rel, n, name, ent, "model", "GitHub Copilot model name"))
     return hits
 
 
@@ -457,19 +484,25 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--allow-partial", action="store_true", help="continue if a provider page can't be fetched")
     a = ap.parse_args(argv)
-    db, meta = load_db(a.refresh)
+    root = Path(a.path).resolve()
+    if a.lookup:
+        need_copilot = any(x.lower().startswith("copilot:") for x in a.lookup)
+    else:
+        if not root.exists():
+            sys.exit(f"error: {root} does not exist")
+        need_copilot = any(p.name.lower().endswith(COPILOT_FILES) for p in iter_files(root, True))
+    db, meta = load_db(a.refresh, copilot=need_copilot)
     if a.lookup:
         for mid in a.lookup:
-            e = next((db[c] for c in normalize(mid) if c in db), None)
+            e = db.get(copilot_key(mid[8:])) if mid.lower().startswith("copilot:") else \
+                next((db[c] for c in normalize(mid) if c in db), None)
             print(f"{mid}: {describe(e)}" + (f"  [{e.source}]" if e else ""))
         return
-    root = Path(a.path).resolve()
-    if not root.exists():
-        sys.exit(f"error: {root} does not exist")
     failed = [p for p, m in meta.items() if m.startswith("unavailable")]
     if failed and not a.allow_partial:
-        sys.exit(f"error: could not load {', '.join(failed)} deprecation data ({'; '.join(meta[p] for p in failed)}); "
-                 "results would be incomplete. Retry, or pass --allow-partial.")
+        print(f"error: could not load {', '.join(failed)} deprecation data ({'; '.join(meta[p] for p in failed)}); "
+              "results would be incomplete. Retry, or pass --allow-partial.", file=sys.stderr)
+        sys.exit(2)   # 2 = sources unavailable, distinct from 1 = retired/retiring models found
     hits = scan(root, db, not a.no_docs)
     if a.json:
         print(json.dumps([{"file": h.file, "line": h.line, "match": h.match, "kind": h.kind,
