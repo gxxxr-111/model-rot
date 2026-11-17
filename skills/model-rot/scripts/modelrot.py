@@ -33,6 +33,8 @@ SOURCES = {
     "cloudflare": "https://developers.cloudflare.com/changelog/rss/index.xml",
     "groq": "https://console.groq.com/docs/deprecations",
     "mistral": "https://docs.mistral.ai/getting-started/models/",
+    # Bedrock keeps its own, region-scoped schedule for models launched before 2026-09-07
+    "bedrock": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle-legacy.md",
 }
 CONTEXT_GATED = ("groq", "mistral")
 # names no other host uses: these need no "mistral" in the file
@@ -329,10 +331,31 @@ def parse_mistral(text: str, provider: str, src: str) -> list[Entry]:
     return out
 
 
+def parse_bedrock(text: str, provider: str, src: str) -> list[Entry]:
+    """Bedrock's legacy lifecycle page: list records with **Model ID:**, **Regions:**, **EOL date:**.
+    EOL can differ by Region; an ID listed several times keeps its earliest date and all region notes."""
+    recs: dict[str, list[tuple[dt.date, str]]] = {}
+    for r in re.split(r"\n\s*- \*\*Model name:\*\*", text):
+        eol = re.search(r"\*\*EOL date:\*\*\s*([A-Z][a-z]+ \d{1,2},? \d{4})", r)
+        d = parse_date(eol.group(1))[0] if eol else None
+        if d is None:
+            continue
+        reg = re.search(r"\*\*Regions:\*\*\s*([^/\n]+)", r)
+        for mid in re.findall(r"\*\*Model ID:\*\*\s*`?([\w.:-]+)", r):
+            recs.setdefault(mid.lower(), []).append((d, reg.group(1).strip() if reg else "all listed Regions"))
+    out = []
+    for mid, lst in recs.items():
+        lst.sort()
+        where = "; ".join(f"{d} in {r}" for d, r in lst)
+        out.append(Entry(mid, "bedrock", lst[0][0], False, f"Bedrock EOL by Region: {where} (other Regions may differ)",
+                         False, None, src))
+    return out
+
+
 PARSERS = {"anthropic": parse_markdown_tables, "openai": parse_html_tables, "gemini": parse_markdoc_tables,
            "copilot": parse_copilot_docs, "copilot-changelog": parse_copilot_changelog,
            "cloudflare": parse_cloudflare_changelog, "groq": parse_groq,
-           "mistral": parse_mistral}
+           "mistral": parse_mistral, "bedrock": parse_bedrock}
 
 
 def load_db(refresh=False, copilot=True) -> tuple[dict[str, Entry], dict[str, str]]:
@@ -368,6 +391,9 @@ def normalize(model: str) -> list[str]:
     """Candidate DB keys for an ID found in code (provider prefixes, Bedrock/Vertex forms)."""
     m = model.lower()
     cands = [m]
+    geo = re.sub(r"^(?:us|eu|apac|au|jp|global|ca|us-gov)\.(?=[a-z0-9-]+\.)", "", m)   # us.anthropic.… -> anthropic.…
+    if geo != m:
+        cands.append(geo)
     m2 = re.sub(r"^(?:[a-z]{2,6}\.)?anthropic\.", "", m)                   # Bedrock (us./eu./apac./au./jp./global.)
     m2 = re.sub(r"-v\d+(?::\d+)?$", "", m2)
     m2 = re.sub(r"@(\d{8})$", r"-\1", m2)                                 # Vertex claude-x@20250514
@@ -503,7 +529,7 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
                             continue   # "deepseek/deepseek-r1-…" is another provider's route, not a Groq call
                     if ent:
                         note = ("Bedrock/Vertex ID: those platforms keep their own schedules"
-                                if normalize(part)[-1] != part.lower() else "")
+                                if normalize(part)[-1] != part.lower() and ent.provider != "bedrock" else "")
                         if not note and ent.provider in CLOUD_CAVEAT and clouds:
                             note = (f"this file also mentions {', '.join(clouds)}: if the model is served there, "
                                     "that platform's schedule applies, not the provider's")

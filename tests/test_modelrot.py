@@ -287,6 +287,21 @@ class Cloudflare(unittest.TestCase):
                          [(1, "@cf/meta/llama-3.2-3b-instruct", "cloudflare")])
 
 
+class Bedrock(unittest.TestCase):
+    def test_regions_and_prefixes(self):
+        mr.TODAY = TODAY
+        db = {e.id: e for e in mr.parse_bedrock((FX / "bedrock.md").read_text(), "bedrock", "b")}
+        h = db["anthropic.claude-3-haiku-20240307-v1:0"]
+        self.assertEqual((h.date, h.status(TODAY)), (dt.date(2026, 11, 13), "retired"))   # earliest Region date
+        self.assertIn("2027-07-01 in us-east-1", h.replacement)                          # other Region kept
+        self.assertEqual(db["ai21.jamba-1-5-large-v1:0"].status(TODAY), "retiring")
+        # cross-region inference profile resolves to the Bedrock entry, not the Anthropic one
+        anth = mr.Entry("claude-3-haiku-20240307", "anthropic", dt.date(2030, 1, 1))
+        both = dict(db, **{"claude-3-haiku-20240307": anth})
+        self.assertEqual(mr.lookup("us.anthropic.claude-3-haiku-20240307-v1:0", both).provider, "bedrock")
+        self.assertEqual(mr.lookup("claude-3-haiku-20240307", both).provider, "anthropic")
+
+
 class Mistral(unittest.TestCase):
     def test_parse_and_gate(self):
         mr.TODAY = TODAY

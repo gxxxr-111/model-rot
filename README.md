@@ -2,7 +2,7 @@
 
 > v0.1. Standard library only. Read-only.
 
-**Find AI model IDs and APIs in your code that providers have retired, or are about to.** Sources, parsed live from the providers' own pages: Anthropic, OpenAI, Gemini, GitHub Copilot (prompt/agent files), Cloudflare Workers AI, Groq and Mistral.
+**Find AI model IDs and APIs in your code that providers have retired, or are about to.** Sources, parsed live from the providers' own pages: Anthropic, OpenAI, Gemini, GitHub Copilot (prompt/agent files), Cloudflare Workers AI, Groq, Mistral and Amazon Bedrock.
 
 Providers retire models on published schedules, and retired IDs fail hard (HTTP 404 / `model_not_found`). Shipped products keep stale defaults in configs, docs and example files. Open issues in large projects show it: [OpenMetadata#36757](https://github.com/open-metadata/OpenMetadata/issues/36757) and [IBM/mcp-context-forge#7375](https://github.com/IBM/mcp-context-forge/issues/7375) default to a retired Claude model, and [Flowise#6698](https://github.com/FlowiseAI/Flowise/issues/6698) depends on the shut-down Assistants API.
 
@@ -47,6 +47,10 @@ Parsed from [Groq's deprecations page](https://console.groq.com/docs/deprecation
 ## Mistral
 
 Parsed from the legacy-models table on [Mistral's models page](https://docs.mistral.ai/getting-started/models/) (API ID, deprecation and retirement dates; the retirement date is used). On 2026-11-17: 45 retired, 5 retiring (latest 2027-04-30); a row with no API ID ("Mistral 7B") is skipped. Context-gated like Groq (OpenRouter serves `mistralai/…` on its own schedule). When a file also mentions Vertex AI, Azure or Bedrock, the hit carries a note: Mistral models hosted there follow that platform's schedule (found in Mistral's own GCP/Azure client examples).
+
+## Amazon Bedrock
+
+Bedrock keeps its own schedule, and it can differ by Region. model-rot reads the [legacy lifecycle page](https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle-legacy.md) (AWS publishes a markdown version; it covers models launched before 2026-09-07). Full Bedrock IDs and cross-Region inference profiles (`us.anthropic.…-v1:0`) resolve to the Bedrock entry before Anthropic's schedule; an ID listed for several Regions shows its earliest EOL date plus every Region's date. On 2026-11-17: 53 records, 18 past EOL, e.g. Jamba 1.5 Large/Mini on 2026-11-26 (us-east-1) and Claude Opus 4.1 on 2027-01-08 (three US Regions). Bedrock IDs not on that page still fall back to the model provider's schedule with a note. Models launched after 2026-09-07 follow a newer policy page that model-rot doesn't parse yet.
 
 ## Limits
 - Anthropic, OpenAI and Google only, for now. Parsers are per page format; other providers can be added. Checked 2026-11-17: Alibaba Model Studio (百炼) publishes its retirement *policy* as a table ([模型下线](https://help.aliyun.com/zh/model-studio/model-depreciation): 30 days' notice for snapshots, 3 months for main models), but the retired-model lists are separate prose announcements (aliyun.com/notice/…), too fragile to parse reliably. No official deprecation page was found for DeepSeek or Zhipu.
