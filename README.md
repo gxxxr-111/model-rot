@@ -21,7 +21,7 @@ Every hit gets one of four states:
 - **no date announced**.
 
 ```bash
-python3 modelrot.py path/to/app              # exit 1 on retired / aliased / retiring within --days (default 60)
+python3 modelrot.py path/to/app              # exit 1 on retired / aliased / retiring within --days (default 60); exit 2 if a source page is unavailable
 python3 modelrot.py --lookup gpt-5 claude-sonnet-4-5-20250929 gemini-2.5-pro
 python3 modelrot.py path/to/app --no-docs --days 30
 ```
