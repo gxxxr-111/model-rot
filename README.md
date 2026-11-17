@@ -31,7 +31,7 @@ It understands Bedrock (`us.anthropic.claude-…-v1:0`) and Vertex (`claude-…@
 Validated on 2026-11-17: OpenMetadata → `conf/openmetadata.yaml:705` `claude-3-5-sonnet-20240620`, retired 2025-10-28 (the bug in its open issue). mcp-context-forge → 52 retired references across code, admin UI and docs.
 
 ## Limits
-- Anthropic, OpenAI and Google only, for now. Parsers are per page format; other providers can be added.
+- Anthropic, OpenAI and Google only, for now. Parsers are per page format; other providers can be added. Checked 2026-11-17: Alibaba Model Studio (百炼) publishes its retirement *policy* as a table ([模型下线](https://help.aliyun.com/zh/model-studio/model-depreciation): 30 days' notice for snapshots, 3 months for main models), but the retired-model lists are separate prose announcements (aliyun.com/notice/…), too fragile to parse reliably. No official deprecation page was found for DeepSeek or Zhipu.
 - IDs built at runtime (`f"claude-{size}"`, environment variables) aren't visible.
 - If a provider redesigns its page, parsing can break. The report shows row counts per source, so a sudden drop to 0 is visible.
 
