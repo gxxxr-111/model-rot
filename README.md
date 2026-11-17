@@ -30,6 +30,17 @@ It understands Bedrock (`us.anthropic.claude-…-v1:0`) and Vertex (`claude-…@
 
 Validated on 2026-11-17: OpenMetadata → `conf/openmetadata.yaml:705` `claude-3-5-sonnet-20240620`, retired 2025-10-28 (the bug in its open issue). mcp-context-forge → 52 retired references across code, admin UI and docs.
 
+## Install
+
+As a Claude Code plugin:
+
+```
+/plugin marketplace add gxxxr-111/model-rot
+/plugin install model-rot@model-rot
+```
+
+Or copy `skills/model-rot` into `~/.claude/skills/`, or run the script directly (Python 3.10+, standard library only, no dependencies).
+
 ## GitHub Copilot prompt and agent files
 
 VS Code `.prompt.md`, `.agent.md` and `.chatmode.md` files can pin a Copilot model by display name in their frontmatter (`model: Claude Sonnet 4.5 (copilot)`). model-rot checks those names against GitHub's [model retirement history](https://docs.github.com/en/copilot/reference/ai-models/supported-models) **and** the [changelog feed](https://github.blog/changelog/feed/), because the docs table lags: on 2026-11-17 the [2026-12-14 retirements](https://github.blog/changelog/2026-11-13-upcoming-deprecation-of-selected-github-copilot-models-in-december) were only in the changelog. Footnoted rows (e.g. Haiku 4.5 staying on annual individual plans) are reported with "exceptions apply".
