@@ -212,5 +212,27 @@ class CopilotReview(unittest.TestCase):
             mr.fetch = real
 
 
+class Cloudflare(unittest.TestCase):
+    def setUp(self):
+        mr.TODAY = TODAY
+        self.db = {e.id: e for e in mr.parse_cloudflare_changelog((FX / "cloudflare.xml").read_text(), "cloudflare", "c")}
+
+    def test_parse_only_listed_deprecations(self):
+        self.assertEqual(sorted(self.db), ["@cf/meta/llama-3.2-3b-instruct", "@cf/myshell-ai/melotts", "@cf/old/emb-300m"])
+        self.assertEqual(self.db["@cf/old/emb-300m"].replacement, "@cf/old/emb-2")    # "(available soon)" after it
+        self.assertEqual(self.db["@cf/meta/llama-3.2-3b-instruct"].status(TODAY), "retiring")
+
+    def test_scan_full_id_and_no_part_collisions(self):
+        import tempfile
+        other = mr.Entry("llama-3.2-3b-instruct", "other", dt.date(2020, 1, 1))
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "worker-configuration.d.ts").write_text("'@cf/meta/llama-3.2-3b-instruct': BaseAiTextGeneration\n")
+            (Path(d) / "w.ts").write_text("await env.AI.run('@cf/meta/llama-3.2-3b-instruct', x)\n"
+                                          "const ok = '@cf/deepgram/aura-2-en'\n")
+            hits = mr.scan(Path(d), dict(self.db, **{"llama-3.2-3b-instruct": other}))
+        self.assertEqual([(h.line, h.match, h.entry.provider) for h in hits],
+                         [(1, "@cf/meta/llama-3.2-3b-instruct", "cloudflare")])
+
+
 if __name__ == "__main__":
     unittest.main()

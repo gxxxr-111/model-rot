@@ -1,0 +1,7 @@
+<rss><channel>
+<item><title>Workers AI - Planned model deprecations on Workers AI</title><link>https://developers.cloudflare.com/changelog/post/x/</link>
+<description>&lt;p&gt;For frontier needs: &lt;code&gt;@cf/new/frontier-1&lt;/code&gt;.&lt;/p&gt;&lt;h4&gt;Models deprecated on November 20, 2026&lt;/h4&gt;
+&lt;ul&gt;&lt;li&gt;&lt;code&gt;@cf/meta/llama-3.2-3b-instruct&lt;/code&gt;&lt;/li&gt;&lt;li&gt;&lt;code&gt;@cf/old/emb-300m&lt;/code&gt; → &lt;code&gt;@cf/old/emb-2&lt;/code&gt; (available soon)&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;@cf/myshell-ai/melotts&lt;/code&gt; → &lt;code&gt;@cf/deepgram/aura-2-en&lt;/code&gt;&lt;/li&gt;&lt;/ul&gt;</description></item>
+<item><title>Workers - New feature</title><link>y</link><description>Models deprecated on January 1, 2026 @cf/not/this</description></item>
+</channel></rss>
