@@ -448,7 +448,11 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
                 whole = m.group(0).strip(".:-/")
                 # try the whole token (Bedrock "us.anthropic.claude-…-v1:0") and its / and : parts
                 # ("openai/gpt-5", "models/gemini-2.0-flash:generateContent", "ft:gpt-4o-mini-…:org::x")
-                parts = [whole] + [x for x in re.split(r"[/:]", whole) if x]
+                segs_all = [x for x in re.split(r"[/:]", whole) if x]
+                # suffix joins too: "groq/qwen/qwen3-32b" (litellm) must reach the slash-containing ID "qwen/qwen3-32b"
+                tail = [x for x in whole.split(":")[-1].split("/") if x]
+                joins = ["/".join(tail[i:]) for i in range(1, len(tail) - 1)]
+                parts = [whole] + joins + segs_all
                 for part in dict.fromkeys(parts):
                     part = part.strip(".-")
                     if not part or part != part.lower():

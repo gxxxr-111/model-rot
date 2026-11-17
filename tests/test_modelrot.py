@@ -250,9 +250,11 @@ class Groq(unittest.TestCase):
             (Path(d) / "a.py").write_text("from groq import Groq\nm = 'llama-3.3-70b-versatile'\n")
             (Path(d) / "b.py").write_text("# OpenRouter\nm = 'qwen/qwen3-32b'\n")
             (Path(d) / "c.py").write_text("# Groq, OpenAI, DeepSeek routes\nm = ['deepseek/llama-3.3-70b-versatile', 'groq/llama-3.3-70b-versatile']\n")
+            (Path(d) / "e.py").write_text("# groq\nm = ['groq/qwen/qwen3-32b', 'openrouter/qwen/qwen3-32b']\n")
             hits = mr.scan(Path(d), self.db)
         self.assertEqual(sorted((h.file, h.match) for h in hits),
-                         [("a.py", "llama-3.3-70b-versatile"), ("c.py", "llama-3.3-70b-versatile")])
+                         [("a.py", "llama-3.3-70b-versatile"), ("c.py", "llama-3.3-70b-versatile"),
+                          ("e.py", "qwen/qwen3-32b")])
 
 
 if __name__ == "__main__":
