@@ -6,5 +6,15 @@
     "name": "gxxxr-111"
   },
   "repository": "https://github.com/gxxxr-111/model-rot",
-  "license": "MIT"
+  "license": "MIT",
+  "keywords": [
+    "llm",
+    "model-deprecation",
+    "openai",
+    "anthropic",
+    "gemini",
+    "github-copilot",
+    "cloudflare-workers-ai",
+    "aws-bedrock"
+  ]
 }
