@@ -295,6 +295,10 @@ class Bedrock(unittest.TestCase):
         self.assertEqual((h.date, h.status(TODAY)), (dt.date(2026, 11, 13), "retired"))   # earliest Region date
         self.assertIn("2027-07-01 in us-east-1", h.replacement)                          # other Region kept
         self.assertEqual(db["ai21.jamba-1-5-large-v1:0"].status(TODAY), "retiring")
+        ds = db["deepseek.v3.1"]                                                         # second ID on the line
+        self.assertEqual(ds.date, dt.date(2026, 11, 1))                                  # the later, earlier-dated pair
+        self.assertIn("us-west-2", db["deepseek.v3-v1:0"].replacement)
+        self.assertIn("past Bedrock EOL", mr.describe(ds, TODAY))
         # cross-region inference profile resolves to the Bedrock entry, not the Anthropic one
         anth = mr.Entry("claude-3-haiku-20240307", "anthropic", dt.date(2030, 1, 1))
         both = dict(db, **{"claude-3-haiku-20240307": anth})

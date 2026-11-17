@@ -336,16 +336,26 @@ def parse_bedrock(text: str, provider: str, src: str) -> list[Entry]:
     EOL can differ by Region; an ID listed several times keeps its earliest date and all region notes."""
     recs: dict[str, list[tuple[dt.date, str]]] = {}
     for r in re.split(r"\n\s*- \*\*Model name:\*\*", text):
-        eol = re.search(r"\*\*EOL date:\*\*\s*([A-Z][a-z]+ \d{1,2},? \d{4})", r)
-        d = parse_date(eol.group(1))[0] if eol else None
-        if d is None:
-            continue
-        reg = re.search(r"\*\*Regions:\*\*\s*([^/\n]+)", r)
-        for mid in re.findall(r"\*\*Model ID:\*\*\s*`?([\w.:-]+)", r):
-            recs.setdefault(mid.lower(), []).append((d, reg.group(1).strip() if reg else "all listed Regions"))
+        ids = []
+        for line in re.findall(r"\*\*Model ID:\*\*([^\n]*)", r):      # "a.b-v1:0 (bedrock-runtime), c.d (bedrock-mantle)"
+            ids += re.findall(r"(?<![\w.])[a-z0-9-]+\.[\w.:-]*[\w:]", line.replace("`", ""))
+        # one record can carry several "**Regions:** … / **EOL date:** …" pairs: read each
+        chunks = re.split(r"(?=\*\*Regions:\*\*)", r)
+        pairs = []
+        for ch in chunks:
+            eol = re.search(r"\*\*EOL date:\*\*\s*([A-Z][a-z]+ \d{1,2},? \d{4})", ch)
+            d = parse_date(eol.group(1))[0] if eol else None
+            if d is None:
+                continue
+            reg = re.search(r"\*\*Regions:\*\*\s*([^/\n]+)", ch)
+            pairs.append((d, reg.group(1).strip() if reg else "all listed Regions"))
+        for mid in dict.fromkeys(i.lower() for i in ids):
+            recs.setdefault(mid, []).extend(pairs)
     out = []
     for mid, lst in recs.items():
-        lst.sort()
+        lst = sorted(set(lst))
+        if not lst:
+            continue
         where = "; ".join(f"{d} in {r}" for d, r in lst)
         out.append(Entry(mid, "bedrock", lst[0][0], False, f"Bedrock EOL by Region: {where} (other Regions may differ)",
                          False, None, src))
@@ -603,6 +613,8 @@ def describe(e: Entry | None, today=None) -> str:
     rep = f" → {e.replacement}" if e.replacement and not e.aliased else ""
     if rep and CHAIN_DB:
         rep += replacement_chain(e, CHAIN_DB, today)
+    if s == "retired" and e.provider == "bedrock":
+        return f"past Bedrock EOL {d} in the listed Regions (requests there fail){rep}"
     if s == "retired":
         return f"retired {d}: requests fail{rep}"
     if s == "retiring":

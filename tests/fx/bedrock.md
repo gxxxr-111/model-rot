@@ -15,3 +15,8 @@
   - **Model name:** Claude 3 Haiku
   - **Model ID:** anthropic.claude-3-haiku-20240307-v1:0
   - **Regions:** us-east-1 / **Legacy date:** January 1, 2027 / **EOL date:** July 1, 2027
+- **DeepSeek**
+  - **Model name:** DeepSeek-V3.1
+  - **Model ID:** deepseek.v3-v1:0 (bedrock-runtime), deepseek.v3.1 (bedrock-mantle)
+  - **Regions:** us-west-2 / **Legacy date:** June 1, 2026 / **EOL date:** December 1, 2026
+  - **Regions:** us-gov-west-1 / **Legacy date:** June 1, 2026 / **EOL date:** November 1, 2026
