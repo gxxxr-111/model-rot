@@ -386,6 +386,10 @@ def load_db(refresh=False, copilot=True) -> tuple[dict[str, Entry], dict[str, st
             # keep the most informative row: one with a date beats one without
             if old is None or (old.date is None and e.date is not None):
                 db[key] = e
+        if not entries:
+            # a page that parses to nothing has almost certainly changed format: say so instead of reporting "clean"
+            meta[prov] = "unavailable (parsed 0 rows: the page format may have changed)"
+            continue
         meta[prov] = f"{len(entries)} rows, fetched {dt.datetime.fromtimestamp(ts):%Y-%m-%d %H:%M}"
     for key, e in list(db.items()):   # undated aliases of dated snapshots: claude-x-20250514 -> claude-x, -latest, -0
         m = re.match(r"^(.*)-(\d{8})$", key)

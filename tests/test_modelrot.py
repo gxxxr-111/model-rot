@@ -124,6 +124,17 @@ class FeatureRows(unittest.TestCase):
             self.assertEqual(mr.scan(Path(d), {e.id.lower(): e for e in es}), [])
 
 
+class ZeroRows(unittest.TestCase):
+    def test_empty_parse_is_an_outage_not_clean(self):
+        real = mr.fetch
+        mr.fetch = lambda prov, refresh=False, max_age=86400: ("<html>redesigned page</html>", 0.0)
+        try:
+            db, meta = mr.load_db(copilot=False)
+        finally:
+            mr.fetch = real
+        self.assertTrue(all(m.startswith("unavailable") for m in meta.values()))
+
+
 class Chains(unittest.TestCase):
     def setUp(self):
         D = dt.date
