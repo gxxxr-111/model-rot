@@ -487,28 +487,50 @@ ORDER = {"retired": 0, "aliased": 1, "retiring": 2, "aliasing": 3, "no date": 4,
 CHAIN_DB: dict[str, Entry] = {}   # set by main(): lets describe() check whether a replacement is itself retired
 
 
+OPT_RX = re.compile(r"@?[A-Za-z0-9][\w.@:/-]*")
+
+
+def _options(e: Entry) -> list[str]:
+    if e.provider == "copilot":
+        return [e.replacement.split(" (")[0]] if re.search(r"\d", e.replacement) else []
+    return [t.strip(".,;:`'\"()") for t in OPT_RX.findall(e.replacement or "") if re.search(r"[\d/]", t)]
+
+
+def _lookup_opt(o: str, provider: str, db: dict[str, Entry]) -> Entry | None:
+    c = db.get(copilot_key(o)) if provider == "copilot" else db.get(o.lower())
+    return c if c and c.provider == provider else None
+
+
+def _annotated(e: Entry, db: dict[str, Entry], today=None) -> str:
+    """The replacement text with each dead or dying option marked: 'a-2 [retired 2026-08-16] or b-9'."""
+    text = e.replacement.replace("`", "")
+    for o in dict.fromkeys(_options(e)):
+        c = _lookup_opt(o, e.provider, db)
+        if c and c.status(today) in ("retired", "retiring"):
+            text = re.sub(rf"(?<![\w@/.-]){re.escape(o)}(?![\w/-])", f"{o} [{c.status(today)} {c.date}]", text, count=1)
+    return text
+
+
 def replacement_chain(e: Entry, db: dict[str, Entry], today=None) -> str:
-    """'llama-3.1-70b-versatile → llama-3.3-70b-versatile' when the latter is retired too: follow to a live model."""
+    """Follow replacements while *every* listed option is retired; return the advice with dead options marked."""
     seen, cur, hops = {e.id.lower()}, e, []
     for _ in range(6):
-        if cur.provider == "copilot":
-            opts = [cur.replacement.split(" (")[0]]                 # one display name per cell
-        else:                                                         # ID-like options: "a-1 or b/c-2"
-            opts = [t.strip(".,;:`'\"()") for t in TOKEN.findall(cur.replacement or "") if re.search(r"[\d/-]", t)]
-        cands = [db.get(copilot_key(o)) if cur.provider == "copilot" else db.get(o.lower()) for o in opts]
-        dead = [c for c in cands if c and c.provider == cur.provider and c.status(today) in ("retired", "retiring")]
-        if not opts or len(dead) < len(opts):
-            break      # at least one option is live (or not a known retired ID): the advice stands
-        nxt = next((c for c in dead if c.id.lower() not in seen), None)
+        opts = _options(cur)
+        cands = [_lookup_opt(o, cur.provider, db) for o in opts]
+        if not opts or not all(c and c.status(today) == "retired" for c in cands):
+            break
+        nxt = next((c for c in cands if c.id.lower() not in seen), None)
         if nxt is None:
             break
-        hops.append(f"{nxt.id} is itself {nxt.status(today)} {nxt.date}")
+        hops.append(f"{nxt.id} is itself retired {nxt.date}")
         seen.add(nxt.id.lower())
         cur = nxt
+    marked = _annotated(cur, db, today)
     if not hops:
-        return ""
-    end = f" → {cur.replacement}" if cur.replacement and cur.replacement.strip("— ") else "; no live replacement listed"
-    return " (⚠ " + "; ".join(hops) + end + ")"
+        return f" (⚠ {marked})" if " [retir" in marked else ""   # only when some option is marked dead/dying
+    tail = f" → {marked}" if _options(cur) else "; no live replacement listed" + (
+        f" ({cur.replacement.strip()})" if cur.replacement.strip("—- ") else "")
+    return " (⚠ " + "; ".join(hops) + tail + ")"
 
 
 def describe(e: Entry | None, today=None) -> str:
@@ -577,6 +599,7 @@ def main(argv=None):
             sys.exit(f"error: {root} does not exist")
         need_copilot = any(p.name.lower().endswith(COPILOT_FILES) for p in iter_files(root, True))
     db, meta = load_db(a.refresh, copilot=need_copilot)
+    CHAIN_DB.clear()
     CHAIN_DB.update(db)
     if a.lookup:
         for mid in a.lookup:

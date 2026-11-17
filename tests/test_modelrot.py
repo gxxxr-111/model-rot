@@ -125,23 +125,56 @@ class FeatureRows(unittest.TestCase):
 
 
 class Chains(unittest.TestCase):
-    def test_retired_replacement_is_followed(self):
+    def setUp(self):
         D = dt.date
-        db = {"a-1": mr.Entry("a-1", "groq", D(2025, 1, 1), replacement="a-2"),
-              "a-2": mr.Entry("a-2", "groq", D(2026, 8, 1), replacement="a-3 or b-9"),
-              "a-3": mr.Entry("a-3", "groq", None),
-              "m-1": mr.Entry("m-1", "groq", D(2025, 1, 1), replacement="live-9 or a-2"),
-              "x-1": mr.Entry("x-1", "groq", D(2025, 1, 1), replacement="x-2"),
-              "x-2": mr.Entry("x-2", "groq", D(2025, 6, 1), replacement="—"),
-              "loop-1": mr.Entry("loop-1", "groq", D(2025, 1, 1), replacement="loop-2"),
-              "loop-2": mr.Entry("loop-2", "groq", D(2025, 1, 1), replacement="loop-1"),
-              "other": mr.Entry("other", "openai", D(2025, 1, 1), replacement="a-2")}
-        self.assertEqual(mr.replacement_chain(db["a-1"], db, TODAY), " (⚠ a-2 is itself retired 2026-08-01 → a-3 or b-9)")
-        self.assertEqual(mr.replacement_chain(db["x-1"], db, TODAY), " (⚠ x-2 is itself retired 2025-06-01; no live replacement listed)")
-        self.assertIn("loop-2 is itself retired", mr.replacement_chain(db["loop-1"], db, TODAY))   # terminates
-        self.assertEqual(mr.replacement_chain(db["other"], db, TODAY), "")      # other provider's ID: not followed
-        self.assertEqual(mr.replacement_chain(db["a-3"], db, TODAY), "")
-        self.assertEqual(mr.replacement_chain(db["m-1"], db, TODAY), "")        # one live option: advice stands
+        E = mr.Entry
+        self.db = {k: v for k, v in {
+            "a-1": E("a-1", "groq", D(2025, 1, 1), replacement="a-2"),
+            "a-2": E("a-2", "groq", D(2026, 8, 1), replacement="a-3 or b-9"),
+            "a-3": E("a-3", "groq", None),
+            "x-1": E("x-1", "groq", D(2025, 1, 1), replacement="x-2"),
+            "x-2": E("x-2", "groq", D(2025, 6, 1), replacement="To be announced"),
+            "loop-1": E("loop-1", "groq", D(2025, 1, 1), replacement="loop-2"),
+            "loop-2": E("loop-2", "groq", D(2025, 1, 1), replacement="loop-1"),
+            "m-1": E("m-1", "groq", D(2025, 1, 1), replacement="live-9 or a-2"),
+            "d-1": E("d-1", "groq", D(2025, 1, 1), replacement="d-2 (not drop-in)"),
+            "d-2": E("d-2", "groq", D(2025, 1, 1), replacement="a-3"),
+            "s-1": E("s-1", "groq", D(2025, 1, 1), replacement="s-2"),
+            "s-2": E("s-2", "groq", D(2027, 5, 7)),
+            "c-1": E("@cf/a/c-1", "cloudflare", D(2025, 1, 1), replacement="@cf/a/c-2"),
+            "@cf/a/c-2": E("@cf/a/c-2", "cloudflare", D(2025, 6, 1), replacement="@cf/a/c-3"),
+            "other": E("other", "openai", D(2025, 1, 1), replacement="a-2")}.items()}
+
+    def ch(self, k):
+        return mr.replacement_chain(self.db[k], self.db, TODAY)
+
+    def test_chains(self):
+        self.assertEqual(self.ch("a-1"), " (⚠ a-2 is itself retired 2026-08-01 → a-3 or b-9)")
+        self.assertEqual(self.ch("x-1"), " (⚠ x-2 is itself retired 2025-06-01; no live replacement listed (To be announced))")
+        self.assertIn("loop-2 is itself retired", self.ch("loop-1"))                       # terminates
+        self.assertEqual(self.ch("m-1"), " (⚠ live-9 or a-2 [retired 2026-08-01])")         # live option kept, dead one marked
+        self.assertEqual(self.ch("d-1"), " (⚠ d-2 is itself retired 2025-01-01 → a-3)")    # 'drop-in' is not an option
+        self.assertEqual(self.ch("s-1"), " (⚠ s-2 [retiring 2027-05-07])")                 # retiring: marked, not followed
+        self.assertIn("@cf/a/c-2 is itself retired", self.ch("c-1"))                       # @cf/ IDs resolve
+        self.assertEqual(self.ch("other"), "")                                              # other provider: not followed
+        self.assertEqual(self.ch("a-3"), "")
+
+    def test_chain_db_reset_each_run(self):
+        mr.CHAIN_DB.update({"zz-stale": mr.Entry("zz-stale", "groq", dt.date(2020, 1, 1))})
+        import tempfile
+        real = mr.load_db
+        mr.load_db = lambda refresh=False, copilot=True: ({}, {})
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                import io, contextlib
+                with contextlib.redirect_stdout(io.StringIO()):
+                    try:
+                        mr.main([d])
+                    except SystemExit:
+                        pass
+        finally:
+            mr.load_db = real
+        self.assertNotIn("zz-stale", mr.CHAIN_DB)
 
 
 class Copilot(unittest.TestCase):
