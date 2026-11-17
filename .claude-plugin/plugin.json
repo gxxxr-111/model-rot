@@ -1,0 +1,10 @@
+{
+  "name": "model-rot",
+  "version": "0.1.0",
+  "description": "Find retired, retiring and silently aliased AI model IDs and APIs, checked against official deprecation pages parsed live.",
+  "author": {
+    "name": "gxxxr-111"
+  },
+  "repository": "https://github.com/gxxxr-111/model-rot",
+  "license": "MIT"
+}

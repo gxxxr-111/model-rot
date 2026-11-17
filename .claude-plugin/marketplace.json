@@ -1,0 +1,17 @@
+{
+  "name": "model-rot",
+  "owner": {
+    "name": "gxxxr-111"
+  },
+  "metadata": {
+    "description": "Find retired, retiring and silently aliased AI model IDs and APIs, checked against official deprecation pages parsed live.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "model-rot",
+      "source": "./",
+      "description": "Find retired, retiring and silently aliased AI model IDs and APIs, checked against official deprecation pages parsed live."
+    }
+  ]
+}
