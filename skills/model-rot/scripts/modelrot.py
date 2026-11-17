@@ -484,12 +484,41 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
 ORDER = {"retired": 0, "aliased": 1, "retiring": 2, "aliasing": 3, "no date": 4, "unknown": 5}
 
 
+CHAIN_DB: dict[str, Entry] = {}   # set by main(): lets describe() check whether a replacement is itself retired
+
+
+def replacement_chain(e: Entry, db: dict[str, Entry], today=None) -> str:
+    """'llama-3.1-70b-versatile → llama-3.3-70b-versatile' when the latter is retired too: follow to a live model."""
+    seen, cur, hops = {e.id.lower()}, e, []
+    for _ in range(6):
+        if cur.provider == "copilot":
+            opts = [cur.replacement.split(" (")[0]]                 # one display name per cell
+        else:                                                         # ID-like options: "a-1 or b/c-2"
+            opts = [t.strip(".,;:`'\"()") for t in TOKEN.findall(cur.replacement or "") if re.search(r"[\d/-]", t)]
+        cands = [db.get(copilot_key(o)) if cur.provider == "copilot" else db.get(o.lower()) for o in opts]
+        dead = [c for c in cands if c and c.provider == cur.provider and c.status(today) in ("retired", "retiring")]
+        if not opts or len(dead) < len(opts):
+            break      # at least one option is live (or not a known retired ID): the advice stands
+        nxt = next((c for c in dead if c.id.lower() not in seen), None)
+        if nxt is None:
+            break
+        hops.append(f"{nxt.id} is itself {nxt.status(today)} {nxt.date}")
+        seen.add(nxt.id.lower())
+        cur = nxt
+    if not hops:
+        return ""
+    end = f" → {cur.replacement}" if cur.replacement and cur.replacement.strip("— ") else "; no live replacement listed"
+    return " (⚠ " + "; ".join(hops) + end + ")"
+
+
 def describe(e: Entry | None, today=None) -> str:
     if e is None:
         return "unknown"
     s = e.status(today)
     d = (f"not sooner than {e.date}" if e.earliest else str(e.date)) if e.date else ""
     rep = f" → {e.replacement}" if e.replacement and not e.aliased else ""
+    if rep and CHAIN_DB:
+        rep += replacement_chain(e, CHAIN_DB, today)
     if s == "retired":
         return f"retired {d}: requests fail{rep}"
     if s == "retiring":
@@ -548,6 +577,7 @@ def main(argv=None):
             sys.exit(f"error: {root} does not exist")
         need_copilot = any(p.name.lower().endswith(COPILOT_FILES) for p in iter_files(root, True))
     db, meta = load_db(a.refresh, copilot=need_copilot)
+    CHAIN_DB.update(db)
     if a.lookup:
         for mid in a.lookup:
             e = db.get(copilot_key(mid[8:])) if mid.lower().startswith("copilot:") else \

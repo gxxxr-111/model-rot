@@ -124,6 +124,26 @@ class FeatureRows(unittest.TestCase):
             self.assertEqual(mr.scan(Path(d), {e.id.lower(): e for e in es}), [])
 
 
+class Chains(unittest.TestCase):
+    def test_retired_replacement_is_followed(self):
+        D = dt.date
+        db = {"a-1": mr.Entry("a-1", "groq", D(2025, 1, 1), replacement="a-2"),
+              "a-2": mr.Entry("a-2", "groq", D(2026, 8, 1), replacement="a-3 or b-9"),
+              "a-3": mr.Entry("a-3", "groq", None),
+              "m-1": mr.Entry("m-1", "groq", D(2025, 1, 1), replacement="live-9 or a-2"),
+              "x-1": mr.Entry("x-1", "groq", D(2025, 1, 1), replacement="x-2"),
+              "x-2": mr.Entry("x-2", "groq", D(2025, 6, 1), replacement="—"),
+              "loop-1": mr.Entry("loop-1", "groq", D(2025, 1, 1), replacement="loop-2"),
+              "loop-2": mr.Entry("loop-2", "groq", D(2025, 1, 1), replacement="loop-1"),
+              "other": mr.Entry("other", "openai", D(2025, 1, 1), replacement="a-2")}
+        self.assertEqual(mr.replacement_chain(db["a-1"], db, TODAY), " (⚠ a-2 is itself retired 2026-08-01 → a-3 or b-9)")
+        self.assertEqual(mr.replacement_chain(db["x-1"], db, TODAY), " (⚠ x-2 is itself retired 2025-06-01; no live replacement listed)")
+        self.assertIn("loop-2 is itself retired", mr.replacement_chain(db["loop-1"], db, TODAY))   # terminates
+        self.assertEqual(mr.replacement_chain(db["other"], db, TODAY), "")      # other provider's ID: not followed
+        self.assertEqual(mr.replacement_chain(db["a-3"], db, TODAY), "")
+        self.assertEqual(mr.replacement_chain(db["m-1"], db, TODAY), "")        # one live option: advice stands
+
+
 class Copilot(unittest.TestCase):
     def setUp(self):
         mr.TODAY = TODAY
