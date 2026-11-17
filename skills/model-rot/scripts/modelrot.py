@@ -34,7 +34,13 @@ SOURCES = {
     "groq": "https://console.groq.com/docs/deprecations",
     "mistral": "https://docs.mistral.ai/getting-started/models/",
 }
-CONTEXT_GATED = ("groq", "mistral")   # hosts whose model names are shared with other hosts: report only where the file names them
+CONTEXT_GATED = ("groq", "mistral")
+# names no other host uses: these need no "mistral" in the file
+GATE_EXEMPT = {"mistral": re.compile(r"^(?:codestral|devstral|magistral|pixtral|voxtral|ministral|open-mistral|open-mixtral|mistral)-")}
+CLOUD_HINTS = (("Vertex AI", re.compile(rb"vertex[ _]?ai|vertexai|aiplatform")),
+               ("Azure", re.compile(rb"mistralai_azure|azure[ _.-]?(?:ai|ml|foundry)\b|\.ai\.azure\.com|\.inference\.ml\.azure\.com")),
+               ("Bedrock", re.compile(rb"bedrock-runtime|bedrock_runtime|chatbedrock|amazon bedrock|aws bedrock")))
+CLOUD_CAVEAT = ("mistral",)   # providers whose models are also sold on these clouds under the same IDs   # hosts whose model names are shared with other hosts: report only where the file names them
 CF_ID = re.compile(r"@(?:cf|hf)/[\w.-]+/[\w.-]*[\w]")
 COPILOT_FILES = (".prompt.md", ".agent.md", ".chatmode.md")
 CACHE = Path(os.environ.get("MODEL_ROT_CACHE", Path.home() / ".cache" / "model-rot"))
@@ -456,7 +462,7 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
         rel = str(p.relative_to(base))
         low_data = data.lower()
         mentions = {prov: prov.encode() in low_data for prov in CONTEXT_GATED}
-        clouds = [n for n, k in (("Vertex AI", b"vertex"), ("Azure", b"azure"), ("Bedrock", b"bedrock")) if k in low_data]
+        clouds = [n for n, rx in CLOUD_HINTS if rx.search(low_data)]
         skip_lines: set[int] = set()
         if p.name.lower().endswith(COPILOT_FILES):
             ch = copilot_frontmatter_hits(rel, data.decode("utf-8", "replace"), db)
@@ -489,7 +495,8 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
                             continue   # `o3 = 4` is a variable, not the o3 model
                     ent = lookup(part, db)
                     if ent and ent.provider in CONTEXT_GATED:
-                        if not mentions[ent.provider]:
+                        exempt = GATE_EXEMPT.get(ent.provider)
+                        if not mentions[ent.provider] and not (exempt and exempt.match(part.lower())):
                             continue   # shared names (qwen/qwen3-32b is also an OpenRouter ID): need the host in the file
                         segs = re.split(r"[/:]", whole.lower())
                         if part != whole.lower() and segs[0] != ent.provider:
@@ -497,7 +504,7 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
                     if ent:
                         note = ("Bedrock/Vertex ID: those platforms keep their own schedules"
                                 if normalize(part)[-1] != part.lower() else "")
-                        if not note and ent.provider in CONTEXT_GATED and clouds:
+                        if not note and ent.provider in CLOUD_CAVEAT and clouds:
                             note = (f"this file also mentions {', '.join(clouds)}: if the model is served there, "
                                     "that platform's schedule applies, not the provider's")
                         hits.append(Hit(rel, n, part, ent, "model", note))

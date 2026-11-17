@@ -298,10 +298,12 @@ class Mistral(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "a.py").write_text("from mistralai import Mistral\nm = 'devstral-small-2505'\n")
             (Path(d) / "b.py").write_text("# openrouter\nm = 'mistralai/devstral-small-2505'\n")
-            (Path(d) / "c.py").write_text("m = 'devstral-small-2505'  # via some host\n")
+            (Path(d) / "c.py").write_text("m = 'devstral-small-2505'  # a Mistral-only name\n")
             (Path(d) / "z.py").write_text("from mistralai_azure import MistralAzure\nm = 'devstral-small-2505'\n")
+            (Path(d) / "s.py").write_text("vertex_shader = 1\nclient = AzureOpenAI()\n# mistral\nm = 'devstral-small-2505'\n")
             hits = mr.scan(Path(d), db)
-        self.assertEqual(sorted(h.file for h in hits), ["a.py", "z.py"])
+        self.assertEqual(sorted(h.file for h in hits), ["a.py", "c.py", "s.py", "z.py"])   # devstral-* needs no gate
+        self.assertEqual([h.note for h in hits if h.file == "s.py"], [""])                 # no false cloud caveat
         self.assertEqual([h.note for h in hits if h.file == "a.py"], [""])
         self.assertIn("Azure", [h.note for h in hits if h.file == "z.py"][0])
 
