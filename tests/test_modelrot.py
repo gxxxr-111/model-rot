@@ -234,5 +234,26 @@ class Cloudflare(unittest.TestCase):
                          [(1, "@cf/meta/llama-3.2-3b-instruct", "cloudflare")])
 
 
+class Groq(unittest.TestCase):
+    def setUp(self):
+        mr.TODAY = TODAY
+        self.db = {e.id.lower(): e for e in mr.parse_groq((FX / "groq.html").read_text(), "groq", "g")}
+
+    def test_us_dates(self):
+        self.assertEqual(self.db["llama-3.3-70b-versatile"].date, dt.date(2026, 8, 16))
+        self.assertEqual(self.db["future-model"].date, dt.date(2026, 12, 24))
+        self.assertEqual(self.db["qwen/qwen3-32b"].status(TODAY), "retired")
+
+    def test_hits_only_where_groq_is_named(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "a.py").write_text("from groq import Groq\nm = 'llama-3.3-70b-versatile'\n")
+            (Path(d) / "b.py").write_text("# OpenRouter\nm = 'qwen/qwen3-32b'\n")
+            (Path(d) / "c.py").write_text("# Groq, OpenAI, DeepSeek routes\nm = ['deepseek/llama-3.3-70b-versatile', 'groq/llama-3.3-70b-versatile']\n")
+            hits = mr.scan(Path(d), self.db)
+        self.assertEqual(sorted((h.file, h.match) for h in hits),
+                         [("a.py", "llama-3.3-70b-versatile"), ("c.py", "llama-3.3-70b-versatile")])
+
+
 if __name__ == "__main__":
     unittest.main()

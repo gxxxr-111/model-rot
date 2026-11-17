@@ -31,7 +31,9 @@ SOURCES = {
     "copilot-changelog": "https://github.blog/changelog/feed/",
     # Cloudflare Workers AI announces model removals only as changelog posts ("Models deprecated on <date>").
     "cloudflare": "https://developers.cloudflare.com/changelog/rss/index.xml",
+    "groq": "https://console.groq.com/docs/deprecations",
 }
+CONTEXT_GATED = ("groq",)   # hosts whose model names are shared with other hosts: report only where the file names them
 CF_ID = re.compile(r"@(?:cf|hf)/[\w.-]+/[\w.-]*[\w]")
 COPILOT_FILES = (".prompt.md", ".agent.md", ".chatmode.md")
 CACHE = Path(os.environ.get("MODEL_ROT_CACHE", Path.home() / ".cache" / "model-rot"))
@@ -288,9 +290,19 @@ def parse_cloudflare_changelog(text: str, provider: str, src: str) -> list[Entry
     return out
 
 
+def parse_groq(text: str, provider: str, src: str) -> list[Entry]:
+    """Groq's tables use US MM/DD/YY shutdown dates; convert them (only here) before the shared parser."""
+    def iso(m):
+        mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        y += 2000 if y < 100 else 0
+        return f"{y:04d}-{mo:02d}-{d:02d}" if 1 <= mo <= 12 and 1 <= d <= 31 else m.group(0)
+    text = re.sub(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})(?![\d/])", iso, text)
+    return parse_html_tables(text, provider, src)
+
+
 PARSERS = {"anthropic": parse_markdown_tables, "openai": parse_html_tables, "gemini": parse_markdoc_tables,
            "copilot": parse_copilot_docs, "copilot-changelog": parse_copilot_changelog,
-           "cloudflare": parse_cloudflare_changelog}
+           "cloudflare": parse_cloudflare_changelog, "groq": parse_groq}
 
 
 def load_db(refresh=False, copilot=True) -> tuple[dict[str, Entry], dict[str, str]]:
@@ -418,6 +430,7 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
         if b"\0" in data[:8192]:
             continue
         rel = str(p.relative_to(base))
+        mentions = {prov: prov.encode() in data.lower() for prov in CONTEXT_GATED}
         skip_lines: set[int] = set()
         if p.name.lower().endswith(COPILOT_FILES):
             ch = copilot_frontmatter_hits(rel, data.decode("utf-8", "replace"), db)
@@ -445,6 +458,12 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
                         if not (re.search(r"[\"']", ctx) or "model" in low):
                             continue   # `o3 = 4` is a variable, not the o3 model
                     ent = lookup(part, db)
+                    if ent and ent.provider in CONTEXT_GATED:
+                        if not mentions[ent.provider]:
+                            continue   # shared names (qwen/qwen3-32b is also an OpenRouter ID): need the host in the file
+                        segs = re.split(r"[/:]", whole.lower())
+                        if part != whole.lower() and segs[0] != ent.provider:
+                            continue   # "deepseek/deepseek-r1-…" is another provider's route, not a Groq call
                     if ent:
                         note = ("Bedrock/Vertex ID: those platforms keep their own schedules"
                                 if normalize(part)[-1] != part.lower() else "")
