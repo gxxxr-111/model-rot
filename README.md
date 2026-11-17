@@ -2,7 +2,7 @@
 
 > v0.1. Standard library only. Read-only.
 
-**Find AI model IDs and APIs in your code that providers have retired, or are about to.** Sources, parsed live from the providers' own pages: Anthropic, OpenAI, Gemini, GitHub Copilot (prompt/agent files), Cloudflare Workers AI and Groq.
+**Find AI model IDs and APIs in your code that providers have retired, or are about to.** Sources, parsed live from the providers' own pages: Anthropic, OpenAI, Gemini, GitHub Copilot (prompt/agent files), Cloudflare Workers AI, Groq and Mistral.
 
 Providers retire models on published schedules, and retired IDs fail hard (HTTP 404 / `model_not_found`). Shipped products keep stale defaults in configs, docs and example files. Open issues in large projects show it: [OpenMetadata#36757](https://github.com/open-metadata/OpenMetadata/issues/36757) and [IBM/mcp-context-forge#7375](https://github.com/IBM/mcp-context-forge/issues/7375) default to a retired Claude model, and [Flowise#6698](https://github.com/FlowiseAI/Flowise/issues/6698) depends on the shut-down Assistants API.
 
@@ -43,6 +43,10 @@ Workers AI announces removals only in its [changelog](https://developers.cloudfl
 ## Groq
 
 Parsed from [Groq's deprecations page](https://console.groq.com/docs/deprecations) (US MM/DD/YY dates, converted only for this page). Groq model names are often shared with other hosts (`qwen/qwen3-32b` is also an OpenRouter ID), so a Groq hit counts only in files that mention Groq, and never for a fragment under another provider's prefix (`deepseek/…`). A model set in a `.env` that doesn't say "groq" is therefore missed. On 2026-11-17 all 40 listed models were already shut down, including `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` (2026-08-16); examples still using them: [robin](https://github.com/apurvsinghgautam/robin) (8k★) and [build-with-groq/g1](https://github.com/build-with-groq/g1) (4.2k★, `llama-3.1-70b-versatile`, shut down 2025-01-24).
+
+## Mistral
+
+Parsed from the legacy-models table on [Mistral's models page](https://docs.mistral.ai/getting-started/models/) (API ID, deprecation and retirement dates; the retirement date is used). On 2026-11-17: 45 retired, 5 retiring (latest 2027-04-30); a row with no API ID ("Mistral 7B") is skipped. Context-gated like Groq (OpenRouter serves `mistralai/…` on its own schedule). When a file also mentions Vertex AI, Azure or Bedrock, the hit carries a note: Mistral models hosted there follow that platform's schedule (found in Mistral's own GCP/Azure client examples).
 
 ## Limits
 - Anthropic, OpenAI and Google only, for now. Parsers are per page format; other providers can be added. Checked 2026-11-17: Alibaba Model Studio (百炼) publishes its retirement *policy* as a table ([模型下线](https://help.aliyun.com/zh/model-studio/model-depreciation): 30 days' notice for snapshots, 3 months for main models), but the retired-model lists are separate prose announcements (aliyun.com/notice/…), too fragile to parse reliably. No official deprecation page was found for DeepSeek or Zhipu.

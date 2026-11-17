@@ -287,6 +287,25 @@ class Cloudflare(unittest.TestCase):
                          [(1, "@cf/meta/llama-3.2-3b-instruct", "cloudflare")])
 
 
+class Mistral(unittest.TestCase):
+    def test_parse_and_gate(self):
+        mr.TODAY = TODAY
+        db = {e.id: e for e in mr.parse_mistral((FX / "mistral.html").read_text(), "mistral", "m")}
+        self.assertEqual(sorted(db), ["devstral-small-2505", "mistral-medium-3-5"])
+        self.assertEqual(db["mistral-medium-3-5"].date, dt.date(2027, 4, 30))      # retirement, not deprecation
+        self.assertEqual(db["devstral-small-2505"].status(TODAY), "retired")
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "a.py").write_text("from mistralai import Mistral\nm = 'devstral-small-2505'\n")
+            (Path(d) / "b.py").write_text("# openrouter\nm = 'mistralai/devstral-small-2505'\n")
+            (Path(d) / "c.py").write_text("m = 'devstral-small-2505'  # via some host\n")
+            (Path(d) / "z.py").write_text("from mistralai_azure import MistralAzure\nm = 'devstral-small-2505'\n")
+            hits = mr.scan(Path(d), db)
+        self.assertEqual(sorted(h.file for h in hits), ["a.py", "z.py"])
+        self.assertEqual([h.note for h in hits if h.file == "a.py"], [""])
+        self.assertIn("Azure", [h.note for h in hits if h.file == "z.py"][0])
+
+
 class Groq(unittest.TestCase):
     def setUp(self):
         mr.TODAY = TODAY

@@ -32,8 +32,9 @@ SOURCES = {
     # Cloudflare Workers AI announces model removals only as changelog posts ("Models deprecated on <date>").
     "cloudflare": "https://developers.cloudflare.com/changelog/rss/index.xml",
     "groq": "https://console.groq.com/docs/deprecations",
+    "mistral": "https://docs.mistral.ai/getting-started/models/",
 }
-CONTEXT_GATED = ("groq",)   # hosts whose model names are shared with other hosts: report only where the file names them
+CONTEXT_GATED = ("groq", "mistral")   # hosts whose model names are shared with other hosts: report only where the file names them
 CF_ID = re.compile(r"@(?:cf|hf)/[\w.-]+/[\w.-]*[\w]")
 COPILOT_FILES = (".prompt.md", ".agent.md", ".chatmode.md")
 CACHE = Path(os.environ.get("MODEL_ROT_CACHE", Path.home() / ".cache" / "model-rot"))
@@ -300,9 +301,32 @@ def parse_groq(text: str, provider: str, src: str) -> list[Entry]:
     return parse_html_tables(text, provider, src)
 
 
+def parse_mistral(text: str, provider: str, src: str) -> list[Entry]:
+    """Mistral's legacy table: Model | Version | API | 'Deprecation Retirement' (two M/D/YYYY dates) | Alternative.
+    Its header sits in a separate <table>, so rows are read positionally, keyed on the date cell."""
+    out = []
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", text, re.S):
+        c = [re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", x))).strip()
+             for x in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", tr, re.S)]
+        if len(c) < 4:
+            continue
+        dates = re.findall(r"(\d{1,2})/(\d{1,2})/(\d{4})", c[3])
+        api = c[2].strip("` ")
+        if not dates or not re.fullmatch(r"[a-z0-9][\w.-]*", api):
+            continue
+        mo, d, y = map(int, dates[-1])            # the last date is the retirement date
+        try:
+            date = dt.date(y, mo, d)
+        except ValueError:
+            continue
+        out.append(Entry(api, "mistral", date, False, c[4] if len(c) > 4 else "", False, None, src))
+    return out
+
+
 PARSERS = {"anthropic": parse_markdown_tables, "openai": parse_html_tables, "gemini": parse_markdoc_tables,
            "copilot": parse_copilot_docs, "copilot-changelog": parse_copilot_changelog,
-           "cloudflare": parse_cloudflare_changelog, "groq": parse_groq}
+           "cloudflare": parse_cloudflare_changelog, "groq": parse_groq,
+           "mistral": parse_mistral}
 
 
 def load_db(refresh=False, copilot=True) -> tuple[dict[str, Entry], dict[str, str]]:
@@ -430,7 +454,9 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
         if b"\0" in data[:8192]:
             continue
         rel = str(p.relative_to(base))
-        mentions = {prov: prov.encode() in data.lower() for prov in CONTEXT_GATED}
+        low_data = data.lower()
+        mentions = {prov: prov.encode() in low_data for prov in CONTEXT_GATED}
+        clouds = [n for n, k in (("Vertex AI", b"vertex"), ("Azure", b"azure"), ("Bedrock", b"bedrock")) if k in low_data]
         skip_lines: set[int] = set()
         if p.name.lower().endswith(COPILOT_FILES):
             ch = copilot_frontmatter_hits(rel, data.decode("utf-8", "replace"), db)
@@ -471,6 +497,9 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
                     if ent:
                         note = ("Bedrock/Vertex ID: those platforms keep their own schedules"
                                 if normalize(part)[-1] != part.lower() else "")
+                        if not note and ent.provider in CONTEXT_GATED and clouds:
+                            note = (f"this file also mentions {', '.join(clouds)}: if the model is served there, "
+                                    "that platform's schedule applies, not the provider's")
                         hits.append(Hit(rel, n, part, ent, "model", note))
                         break
             for name, rx in API_PATTERNS:
