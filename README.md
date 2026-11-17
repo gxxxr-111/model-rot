@@ -2,7 +2,7 @@
 
 > v0.1. Standard library only. Read-only.
 
-**Find AI model IDs and APIs in your code that providers have retired, or are about to.**
+**Find AI model IDs and APIs in your code that providers have retired, or are about to.** Sources, parsed live from the providers' own pages: Anthropic, OpenAI, Gemini, GitHub Copilot (prompt/agent files), Cloudflare Workers AI and Groq.
 
 Providers retire models on published schedules, and retired IDs fail hard (HTTP 404 / `model_not_found`). Shipped products keep stale defaults in configs, docs and example files. Open issues in large projects show it: [OpenMetadata#36757](https://github.com/open-metadata/OpenMetadata/issues/36757) and [IBM/mcp-context-forge#7375](https://github.com/IBM/mcp-context-forge/issues/7375) default to a retired Claude model, and [Flowise#6698](https://github.com/FlowiseAI/Flowise/issues/6698) depends on the shut-down Assistants API.
 
