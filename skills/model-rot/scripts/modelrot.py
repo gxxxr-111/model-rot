@@ -270,13 +270,16 @@ def parse_cloudflare_changelog(text: str, provider: str, src: str) -> list[Entry
     out = []
     for item in re.findall(r"<item>(.*?)</item>", text, re.S):
         title = html.unescape((re.search(r"<title>(.*?)</title>", item, re.S) or ["", ""])[1])
-        if "workers ai" not in title.lower() or not re.search(r"deprecat", title, re.I):
+        if "workers ai" not in title.lower() or not re.search(r"deprecat|retir|sunset|remov|end of life", title, re.I):
             continue
         link = (re.search(r"<link>(.*?)</link>", item) or [None, src])[1].strip()
         body = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", html.unescape(item))))
         parts = re.split(r"Models deprecated on ([A-Z][a-z]+ \d{1,2},? \d{4})", body)
         for date_s, seg in zip(parts[1::2], parts[2::2]):
             d, _ = parse_date(date_s)
+            # the list ends at the next non-deprecation section ("Variants that remain active", "Recommended …")
+            seg = re.split(r"(?i)\b(?:remain(?:s|ing)? (?:active|available)|recommended|for the full list|still available|"
+                           r"not affected|unaffected)\b", seg, maxsplit=1)[0]
             arrows = dict(re.findall(rf"({CF_ID.pattern})\s*(?:→|->)\s*({CF_ID.pattern})", seg))
             for mid in dict.fromkeys(CF_ID.findall(seg)):
                 if mid in arrows.values():
