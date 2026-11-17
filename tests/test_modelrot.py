@@ -108,5 +108,51 @@ class ReviewRegressions(unittest.TestCase):
         self.assertNotEqual(c.exception.code, 0)
 
 
+class FeatureRows(unittest.TestCase):
+    def test_feature_row_first_word_is_not_an_id(self):
+        es = mr.rows_to_entries(["Model / product", "Shutdown date", "Recommended replacement"],
+                                [["Agent Builder", "2026-11-30", "Agents SDK"], ["davinci", "2024-01-04", "gpt-x"]], "openai", "o")
+        ids = sorted(e.id for e in es)
+        self.assertEqual(ids, ["Agent Builder", "davinci"])
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "AGENTS.md").write_text("An agent calls another agent.\n")
+            self.assertEqual(mr.scan(Path(d), {e.id.lower(): e for e in es}), [])
+
+
+class Copilot(unittest.TestCase):
+    def setUp(self):
+        mr.TODAY = TODAY
+        self.db = {e.id: e for e in mr.parse_copilot_docs((FX / "copilot.md").read_text(), "copilot", "d")
+                   + mr.parse_copilot_changelog((FX / "copilot-feed.xml").read_text(), "copilot-changelog", "c")}
+
+    def test_sources_parsed_and_scoped(self):
+        self.assertEqual(self.db["copilot:claude sonnet 4.5"].status(TODAY), "retired")
+        self.assertIn("exceptions apply", self.db["copilot:claude opus 4.8"].replacement)   # footnote kept as caveat
+        self.assertEqual(self.db["copilot:claude haiku 4.5"].status(TODAY), "retiring")     # changelog only
+        self.assertEqual(self.db["copilot:claude haiku 4.5"].source, "https://github.blog/changelog/x")
+        self.assertNotIn("copilot:not a retirement", self.db)     # other sections ignored
+        self.assertNotIn("copilot:runner x", self.db)             # non-Copilot changelog posts ignored
+        self.assertNotIn("gpt-5.4", self.db)                      # display names never collide with API IDs
+
+    def test_frontmatter_forms(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".github" / "agents").mkdir(parents=True)
+            (root / ".github" / "agents" / "a.agent.md").write_text(
+                "---\nname: a\nmodel: Claude Sonnet 4.5 (copilot)\n---\nmodel: GPT-5.4 in the body is ignored\n")
+            (root / "b.prompt.md").write_text("---\nmodel: ['claude-haiku-4.5', \"Kimi K3\"]\n---\n")
+            (root / "c.chatmode.md").write_text("---\nmodel:\n  - gpt-5.4\n  - Claude Sonnet 5.5\ntools: []\n---\n")
+            (root / "notes.md").write_text("---\nmodel: Claude Sonnet 4.5\n---\n")   # not a Copilot file
+            both = dict(self.db, **{"gpt-5.4": mr.Entry("gpt-5.4", "openai", dt.date(2030, 1, 1))})
+            hits = mr.scan(root, both)
+        got = sorted((h.file.split("/")[-1], h.line, h.match, h.entry.status(TODAY)) for h in hits)
+        self.assertEqual(got, [("a.agent.md", 3, "Claude Sonnet 4.5 (copilot)", "retired"),
+                               ("b.prompt.md", 2, "Kimi K3", "retiring"),
+                               ("b.prompt.md", 2, "claude-haiku-4.5", "retiring"),
+                               ("c.chatmode.md", 3, "gpt-5.4", "retired")])
+
+
 if __name__ == "__main__":
     unittest.main()

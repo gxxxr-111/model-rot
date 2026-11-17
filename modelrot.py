@@ -25,7 +25,12 @@ SOURCES = {
     "anthropic": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
     "openai": "https://developers.openai.com/api/docs/deprecations",
     "gemini": "https://ai.google.dev/gemini-api/docs/deprecations.md.txt",
+    # GitHub Copilot model *display names*, as pinned in VS Code prompt/agent/chat-mode files. The docs table lags
+    # the changelog (2026-11-17: the 2026-12-14 retirements were only in the changelog), so both are read.
+    "copilot": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/ai-models/supported-models",
+    "copilot-changelog": "https://github.blog/changelog/feed/",
 }
+COPILOT_FILES = (".prompt.md", ".agent.md", ".chatmode.md")
 CACHE = Path(os.environ.get("MODEL_ROT_CACHE", Path.home() / ".cache" / "model-rot"))
 TODAY = dt.date.today()
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
@@ -135,7 +140,9 @@ def rows_to_entries(header: list[str], rows: list[list[str]], provider: str, src
         cell = r[id_col].strip()
         if not ids and cell:
             # a feature/API row ("Assistants API") keeps its name; otherwise the first word is the ID
-            ids = [cell] if re.search(r"\bAPI\b|endpoint", cell) else [cell.split()[0].strip("`,")]
+            first = cell.split()[0].strip("`,")
+            # the first word is an ID only if it looks like one: "Agent Builder" must not turn every "agent" into a hit
+            ids = [first] if not re.search(r"\bAPI\b|endpoint", cell) and ID_RX.fullmatch(first.lower()) else [cell]
         for i in ids:
             out.append(Entry(i, provider, date, earliest, re.sub(r"\s+", " ", rep)[:120], aliased, alias_date, src))
     return out
@@ -192,7 +199,60 @@ def parse_html_tables(text: str, provider: str, src: str) -> list[Entry]:
     return out
 
 
-PARSERS = {"anthropic": parse_markdown_tables, "openai": parse_html_tables, "gemini": parse_markdoc_tables}
+def copilot_key(name: str) -> str:
+    """'Claude Sonnet 4.5 (copilot)', 'claude-sonnet-4.5', 'GPT-5.4' -> one comparable key."""
+    n = re.sub(r"\[\^[^\]]*\]|\*|`", "", name)
+    n = re.sub(r"\((?:copilot|preview)\)", "", n, flags=re.I)
+    return "copilot:" + re.sub(r"[\s_-]+", " ", n.strip().strip("\"'")).lower().strip()
+
+
+def _copilot_rows(rows: list[list[str]], src: str) -> list[Entry]:
+    out = []
+    for r in rows:
+        if len(r) < 2 or not r[0].strip():
+            continue
+        d, _ = parse_date(r[1])
+        if d is None:
+            continue
+        caveat = " (exceptions apply: see source)" if re.search(r"\*|\[\^", r[0]) else ""
+        rep = (r[2].strip() if len(r) > 2 else "") + caveat
+        out.append(Entry(copilot_key(r[0]), "copilot", d, False, rep, False, None, src))
+    return out
+
+
+def parse_copilot_docs(text: str, provider: str, src: str) -> list[Entry]:
+    i = text.find("Model retirement history")
+    if i < 0:
+        return []
+    rows = []
+    for line in text[i:].splitlines()[1:]:
+        if line.startswith("#"):
+            break
+        if line.strip().startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if cells and not all(re.fullmatch(r":?-*:?", c) for c in cells):
+                rows.append(cells)
+    return _copilot_rows([r for r in rows if not r[0].lower().startswith("model name")], src)
+
+
+def parse_copilot_changelog(text: str, provider: str, src: str) -> list[Entry]:
+    out = []
+    for item in re.findall(r"<item>(.*?)</item>", text, re.S):
+        title = html.unescape(re.sub(r"<!\[CDATA\[|\]\]>", "", (re.search(r"<title>(.*?)</title>", item, re.S) or ["", ""])[1]))
+        if not re.search(r"copilot", title, re.I) or not re.search(r"deprecat|retire", title, re.I):
+            continue
+        link = (re.search(r"<link>(.*?)</link>", item) or [None, src])[1].strip()
+        for tbl in re.findall(r"<table[^>]*>(.*?)</table>", html.unescape(item), re.S):
+            rows = [[re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", c))).strip()
+                     for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", tr, re.S)]
+                    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", tbl, re.S)]
+            if rows and re.search(r"model", rows[0][0], re.I) and len(rows[0]) > 1 and re.search(r"date", rows[0][1], re.I):
+                out += _copilot_rows(rows[1:], link)
+    return out
+
+
+PARSERS = {"anthropic": parse_markdown_tables, "openai": parse_html_tables, "gemini": parse_markdoc_tables,
+           "copilot": parse_copilot_docs, "copilot-changelog": parse_copilot_changelog}
 
 
 def load_db(refresh=False) -> tuple[dict[str, Entry], dict[str, str]]:
@@ -263,6 +323,32 @@ def lookup(token: str, db: dict[str, Entry]) -> Entry | None:
     return next((db[c] for c in normalize(token) if c in db), None)
 
 
+def copilot_frontmatter_hits(rel: str, text: str, db: dict[str, Entry]) -> list[Hit]:
+    """`model:` in a VS Code prompt/agent/chat-mode file: a string, an inline [list] or a YAML block list."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return []
+    hits, in_list = [], False
+    for n, line in enumerate(lines[1:], 2):
+        if line.strip() == "---":
+            break
+        m = re.match(r"^model\s*:\s*(.*)$", line)
+        if m:
+            val = m.group(1).split(" #")[0].strip()
+            in_list = not val
+            names = [x for x in re.split(r",", val.strip("[]")) if x.strip()] if val else []
+        elif in_list and (m2 := re.match(r"^\s+-\s*(.+)$", line)):
+            names = [m2.group(1)]
+        else:
+            in_list = False
+            continue
+        for name in names:
+            ent = db.get(copilot_key(name))
+            if ent:
+                hits.append(Hit(rel, n, name.strip().strip("\"'"), ent, "model", "GitHub Copilot model name"))
+    return hits
+
+
 def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
     hits = []
     base = root if root.is_dir() else root.parent
@@ -276,7 +362,14 @@ def scan(root: Path, db: dict[str, Entry], include_docs=True) -> list[Hit]:
         if b"\0" in data[:8192]:
             continue
         rel = str(p.relative_to(base))
+        skip_lines: set[int] = set()
+        if p.name.lower().endswith(COPILOT_FILES):
+            ch = copilot_frontmatter_hits(rel, data.decode("utf-8", "replace"), db)
+            hits += ch
+            skip_lines = {h.line for h in ch}   # a Copilot display name, not an API ID with another schedule
         for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+            if n in skip_lines:
+                continue
             low = line.lower()
             for m in TOKEN.finditer(line):
                 whole = m.group(0).strip(".:-/")
@@ -380,6 +473,7 @@ def main(argv=None):
     hits = scan(root, db, not a.no_docs)
     if a.json:
         print(json.dumps([{"file": h.file, "line": h.line, "match": h.match, "kind": h.kind,
+                           "provider": h.entry.provider if h.entry else "",
                            "status": h.entry.status() if h.entry else "unknown", "detail": describe(h.entry)} for h in hits],
                          indent=1))
     else:

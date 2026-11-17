@@ -30,6 +30,12 @@ It understands Bedrock (`us.anthropic.claude-…-v1:0`) and Vertex (`claude-…@
 
 Validated on 2026-11-17: OpenMetadata → `conf/openmetadata.yaml:705` `claude-3-5-sonnet-20240620`, retired 2025-10-28 (the bug in its open issue). mcp-context-forge → 52 retired references across code, admin UI and docs.
 
+## GitHub Copilot prompt and agent files
+
+VS Code `.prompt.md`, `.agent.md` and `.chatmode.md` files can pin a Copilot model by display name in their frontmatter (`model: Claude Sonnet 4.5 (copilot)`). model-rot checks those names against GitHub's [model retirement history](https://docs.github.com/en/copilot/reference/ai-models/supported-models) **and** the [changelog feed](https://github.blog/changelog/feed/), because the docs table lags: on 2026-11-17 the [2026-12-14 retirements](https://github.blog/changelog/2026-11-13-upcoming-deprecation-of-selected-github-copilot-models-in-december) were only in the changelog. Footnoted rows (e.g. Haiku 4.5 staying on annual individual plans) are reported with "exceptions apply".
+
+Measured 2026-11-17: in [github/awesome-copilot](https://github.com/github/awesome-copilot), 88 files pin a model and **71 name a retired or retiring one** (72 retired pins, 13 retiring on 2026-12-14). The changelog feed holds only recent posts, so a deprecation older than the feed window is covered only once the docs table lists it.
+
 ## Limits
 - Anthropic, OpenAI and Google only, for now. Parsers are per page format; other providers can be added. Checked 2026-11-17: Alibaba Model Studio (百炼) publishes its retirement *policy* as a table ([模型下线](https://help.aliyun.com/zh/model-studio/model-depreciation): 30 days' notice for snapshots, 3 months for main models), but the retired-model lists are separate prose announcements (aliyun.com/notice/…), too fragile to parse reliably. No official deprecation page was found for DeepSeek or Zhipu.
 - IDs built at runtime (`f"claude-{size}"`, environment variables) aren't visible.
